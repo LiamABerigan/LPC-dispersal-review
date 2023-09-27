@@ -1,0 +1,28 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r}
+library(tidyverse)
+library(terra)
+library(here)
+```
+
+```{r}
+cdl <- rast(here("nass_ks", "cdl_30m_r_ks_2021_utm14.tif"))
+freq_table <- freq(cdl)
+# cellSize(cdl) #area 900 sq meters
+```
+
+```{r}
+cell_count <- freq_table %>% 
+  filter(value == "Grassland/Pasture") %>% 
+  pull(count) 
+
+(cell_count * 900)/4046.8564224 #20977781
+
+# 1773303/20977781 # 1773303 is the number of acres enrolled in CRP in Kansas in June 2021
+# [1] 0.08453244
+```
+

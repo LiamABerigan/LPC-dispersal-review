@@ -1,0 +1,93 @@
+Identification_Information:
+  Citation:
+    Citation_Information:
+      Originator: USDA/NRCS - National Geospatial Center of Excellence
+      Title: USDA-NASS Cropland Data Layer
+  Description:
+    Purpose: The purpose of the Cropland Data Layer is to use satellite imagery to (1) provide supplemental acreage estimates for the state's major commodities and (2) produce digital, crop specific, categorized geo-referenced output products.
+  Time_Period_of_Content:
+    Time_Period_Information:
+      Single_Date/Time:
+        Calendar_Date: 2021
+  Status:
+    Progress: Complete
+  Spatial_Domain:
+    Bounding_Coordinates:
+      West_Bounding_Coordinate: -102.05177
+      East_Bounding_Coordinate: -94.58839
+      North_Bounding_Coordinate: 40.00317
+      South_Bounding_Coordinate: 36.99302
+  Keywords:
+    Theme:
+      Theme_Keyword_Thesaurus: Standard for Geospatial Dataset File Naming
+      Theme_Keyword: Cropland, Landuse
+    Place:
+      Place_Keyword_Thesaurus: GNIS
+      Place_Keyword: Kansas
+      Place_Keyword: *
+  Use_Constraints:
+
+    The U.S. Department of Agriculture, Service Center Agencies should be acknowledged as the data source in products derived from these data.
+
+    This data set is not designed for use as a primary regulatory tool in permitting or citing decisions, but may be used as a reference source.  This information may be interpreted by organizations, agencies, units of government, or others based on needs; however, they are responsible for the appropriate application.  Federal, State, or local regulatory bodies are not to reassign to the Service Center Agencies any authority for the decisions that they make.  The Service Center Agencies will not perform any evaluations of these data for purposes related solely to State or local regulatory programs.
+
+    Photographic or digital enlargement of these data to scales greater than at which they were originally mapped can cause misinterpretation of the data.  Digital data files are periodically updated, and users are responsible for obtaining the latest version of the data.
+  Point_of_Contact:
+    Contact_Information:
+      Contact_Organization_Primary:
+        Contact_Organization: Farm Production and Conservation Business Center (FPAC BC) Geospatial Enterprise Operations (GEO) Branch
+      Contact_Address:
+        Address: 501 W. Felix St, Bldg 23
+        City: Fort Worth
+        State_or_Province: Texas
+        Postal_Code: 76115
+Data_Quality_Information:
+  Lineage:
+    Source_Information:
+      Source_Citation:
+        Citation_Information:
+          Originator:
+            USDA-NRCS-NASS
+          Publication_Date: 2021
+          Title: Cropland Data Layer
+      Source_Scale_Denominator: 1:100,000
+    Process_Step:
+      Process_Description: The CDL product depicts agricultural land cover over the Continental United States at 30 meters resolution. CropScape includes historical data dating back to 1997 for some locales. The CDL is an annual raster, geo-referenced, crop-specific land cover data layer produced using satellite imagery and extensive agricultural ground truth collected during the current growing season. Please note that no farmer reported data are derivable from CropScape or the Cropland Data Layer.
+      Process_Date: 202203
+Spatial_Reference_Information:
+  Horizontal_Coordinate_System_Definition:
+    Planar:
+      Grid_Coordinate_System:
+        Grid_Coordinate_System_Name: Universal Transverse Mercator
+        Universal_Transverse_Mercator:
+          UTM_Zone_Number: 15
+          Transverse_Mercator:
+            Scale_Factor_at_Central_Meridian: 0.9996
+            Longitude_of_Central_Meridian: -93
+            Latitude_of_Projection_Origin: 0.0
+            False_Easting: 500000.0
+            False_Northing: 0.0
+    Geodetic_Model:
+      Horizontal_Datum_Name: North American Datum of 1983 (NAD83)
+      Ellipsoid_Name: GRS1980
+      Semi-major_Axis: 6378137.0
+      Denominator_of_Flattening_Ratio: 298.257222101
+Entity_and_Attribute_Information:
+  Overview_Description:
+    Entity_and_Attribute_Overview:
+      The Cropland Data Layer (CDL) is produced using agricultural training data from the Farm Service Agency (FSA) Common Land Unit (CLU) Program and non-agricultural training data from the most current version of the United States Geological Survey (USGS)
+    Entity_and_Attribute_Detail_Citation: National Land Cover Database (NLCD). The strength and emphasis of the CDL is crop-specific land cover categories. The accuracy of the CDL non-agricultural land cover classes are entirely dependent upon the NLCD. Thus, the USDA, NASS recommends that users consider the NLCD for studies involving non-agricultural land cover.
+Distribution_Information:
+  Distribution_Liability:
+
+    Although these data have been processed successfully on a computer system at the U.S. Department of Agriculture, no warranty expressed or implied is made by the Service Center Agencies regarding the utility of the data on any other system, nor shall the act of distribution constitute any such warranty.  The U.S. Department of Agriculture will warrant the delivery of this product in computer readable format, and will offer appropriate adjustment of credit when the product is determined unreadable by correctly adjusted computer input peripherals, or when the physical medium is delivered in damaged condition.  Request for adjustment of credit must be made within 90 days from the date of this shipment from the ordering site.
+
+    Neither the U.S. Department of Agriculture, nor any of its agencies are liable for misuse of the data, for damage, for transmission of viruses, or for computer contamination through the distribution of these data sets.  The U.S. Department of Agriculture prohibits discrimination in all its programs and activities on the basis of race, color, national origin, sex, religion, age, disability, political beliefs, sexual orientation, or marital or family status. (Not all prohibited bases apply to all programs.)
+  Standard_Order_Process:
+    Digital_Form:
+      Digital_Transfer_Information:
+        Format_Name: Tag Image File Format (TIFF)
+Metadata_Reference_Information:
+  Metadata_Date: 05/11/2023
+  Metadata_Standard_Name: SCI Minimum Compliance Metadata
+  Metadata_Standard_Version: SCI Std 003-02

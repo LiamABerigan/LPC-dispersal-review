@@ -1,0 +1,423 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+Designating settlement sites to describe distances moved before settlement and displacement from the release site
+Liam A. Berigan, 9/21/19
+
+Table of Contents:
+## 1: Creation and segmentation of trajectories, and designation of the response variable
+
+
+Start by detaching all packages so I can customize load order
+```{r}
+library(readr)
+library(sp) #base spatial packages for the analysis
+library(sf) #easier to iterate over than standard spatial features
+library(tidyverse) #mostly used for dplyr pipes and purrr's map function
+library(adehabitatLT) #trajectory framework
+library(googlesheets4)
+library(lubridate)
+library(there)
+library(moveHMM)
+```
+
+
+#
+## 1: Creation and segmentation of trajectories, and designation of the response variable
+#
+
+```{r}
+lpc_gps <- read_csv(here_file("used_available_toolshare", "sat_locations_clean", "sat_locations_2019-11-10.csv"), col_types = cols(Haukos_SatID = col_character()))
+
+lpc_gps$Haukos_SatID %>%
+  str_pad(width = 11, side = "right", pad = "0") ->
+  lpc_gps$Haukos_SatID
+```
+
+Bringing in additional data
+Capture
+```{r}
+banding_2019 <- read_sheet("1Ys9wnY8GV-kEO9q1hXWbvU3RGAzDe8L2lqWIX3wqQMw", "2019")
+banding_2018 <- read_sheet("1Ys9wnY8GV-kEO9q1hXWbvU3RGAzDe8L2lqWIX3wqQMw", "2018")
+banding_2017 <- read_sheet("1Ys9wnY8GV-kEO9q1hXWbvU3RGAzDe8L2lqWIX3wqQMw", "2017")
+banding_2016 <- read_sheet("1Ys9wnY8GV-kEO9q1hXWbvU3RGAzDe8L2lqWIX3wqQMw", "2016")
+
+banding <- rbind(banding_2016, banding_2017, banding_2018, banding_2019)
+
+banding %>%
+  filter(!is.na(BandNumber)) ->
+  banding
+```
+
+Mortality
+```{r}
+mort_ks <- read_sheet("1WnEf_bP3W_cDHcIVL6bBAnnBMkLRDlpEi0mamg_2TU8", "KS Mortality")
+mort_co <- read_sheet("1WnEf_bP3W_cDHcIVL6bBAnnBMkLRDlpEi0mamg_2TU8", "CO Mortality")
+
+mort <- rbind(mort_ks, mort_co)
+```
+
+Joining that data and filtering by mort date and release date
+Removing all locations on and before the release date, and all locations on and after the mort date 
+```{r}
+lpc_gps %>%
+  left_join(., dplyr::select(banding, Haukos_SatID, BandNumber, HandlingDate, ReleaseSite, ReleaseLocation, Sex, ReleaseYear)) %>%
+  left_join(., dplyr::select(mort, BandNumber, Mortality_Detection_Date)) %>%
+  dplyr::select(-surviving, -Point_ID) %>%
+  mutate(Mortality_Detection_Date = replace_na(Mortality_Detection_Date, replace = "2021-1-1"))->
+  lpc_gps
+
+lpc_gps %>%
+  mutate(Date = mdy(Date)) %>% 
+  mutate(HandlingDate = as_date(HandlingDate),
+         Mortality_Detection_Date = as_date(Mortality_Detection_Date)) %>%
+  filter(Date > HandlingDate) %>%
+  filter(Date < Mortality_Detection_Date) -> 
+  lpc_gps
+```
+
+Only concerned with birds from release year 2019
+```{r}
+lpc_gps %>%
+  filter(ReleaseYear == 2019) ->
+  lpc_gps
+```
+
+
+Projecting, getting xy coordinates in 5070, and putting them back in the tibble
+Also filtering out locations from August and after
+```{r}
+lpc_gps %>%
+  filter(!is.na(Latitude)) %>%
+  st_as_sf(coords = c("Longitude", "Latitude"), crs = 4326) %>%
+  st_transform(5070)->
+  lpc_gps_sf
+
+lpc_gps %>%
+  filter(!is.na(Latitude)) %>%
+  cbind(., st_coordinates(lpc_gps_sf)) %>%
+  rename(ID = Haukos_SatID) %>%
+  filter(Date < mdy("8/1/2019")) %>%
+  mutate(DateTime = as.POSIXct(mdy_hm(DateTime))) ->
+  lpc_gps
+
+
+df_list <- lpc_gps %>% split.data.frame(.$ID)
+```
+
+Change the frequency of observations, only drawing one a day for each bird
+I do this to create an average daily speed, which fits Markov models better when I'm concerned about patterns over larger time scales
+```{r}
+once_a_day <- function(i){
+  i[!duplicated(i$Date),] %>% return()
+}
+
+df_list <- df_list %>% map(once_a_day)
+```
+
+Removing any trajectories that have fewer than 10 locations, as the algorithm won't be able to run on samples that small. Gets rid of 12 trajectories
+```{r}
+remove_small_samples <- function(i){
+  indic <- nrow(i) > 9
+  ifelse(indic, TRUE, FALSE) %>% return
+}
+valid_sample <- df_list %>% map(remove_small_samples) %>% unlist(use.names = FALSE)
+df_list  <- df_list[valid_sample] #includes only adequate samples
+```
+
+Putting the trajectories into moveHMM's native trajectory format
+```{r}
+prepare_data <- function(i){
+  i %>% prepData(type = "UTM", coordNames = c("X", "Y")) %>% return()
+}
+traj_list <- df_list %>% map(prepare_data)
+```
+
+Take out any trajectories which end before May 1st (early death). This changed from July 31.
+I'm running an experiment and seeing what happens when I get rid of this
+```{r}
+#dater <- function(i){ #make a list of those which end at the correct date
+#  indic <- any(i$Date > as.Date("2018/05/1"))
+#  ifelse(indic, TRUE, FALSE) %>% return
+#}
+#correct_dates <- traj_list %>% map(dater) %>% unlist(use.names = FALSE)
+#traj_list <- traj_list[correct_dates]#includes only correct dates
+```
+
+```{r}
+hmm_fitter <- function(i){
+  #First: using a moving window function to estimate parameters for the MLE
+  dist_mean <- c()
+  dist_sd <- c()
+  rel_angle_mean <- c()
+  
+  for(t in 1:(nrow(i)-9)){
+    moving_window <- i[t:(t+9),]
+    moving_window %>%
+      pull(step) %>%
+      mean(na.rm = TRUE) %>%
+      append(dist_mean, .) ->
+      dist_mean
+    moving_window %>%
+      pull(step) %>%
+      sd(na.rm = TRUE) %>%
+      append(dist_sd, .) ->
+      dist_sd
+    moving_window %>%
+      pull(angle) %>%
+      abs() %>%
+      mean(na.rm = TRUE) %>%
+      append(rel_angle_mean, .) ->
+      rel_angle_mean
+  }
+  moving_window_df <- cbind(dist_mean, dist_sd, rel_angle_mean) %>% as.data.frame()
+  
+  dist_mean_disp <- max(dist_mean, na.rm = TRUE)
+  dist_mean_settl <- min(dist_mean, na.rm = TRUE)
+  
+  moving_window_df %>%
+    filter(dist_mean == dist_mean_disp) ->
+    moving_window_disp
+  
+  moving_window_df %>%
+    filter(dist_mean == dist_mean_settl) ->
+    moving_window_settl
+  
+  moving_window_disp <- moving_window_disp[1,]
+  moving_window_settl <- moving_window_settl[1,]
+  
+  dist_sd_disp <- moving_window_disp %>%
+    pull(dist_sd)
+  
+  dist_sd_settl <- moving_window_settl %>%
+    pull(dist_sd)
+  
+  rel_angle_mean_disp <- moving_window_disp %>%
+    pull(rel_angle_mean)
+  
+  rel_angle_mean_settl <- moving_window_settl %>%
+    pull(rel_angle_mean)  
+  
+  if(is.nan(rel_angle_mean_settl)){
+    rel_angle_mean_settl <- rel_angle_mean_disp
+  }
+  
+  if(dist_mean_settl == 0) {
+    dist_mean_settl <- 0.0001
+  }
+  
+  if(dist_sd_settl == 0) {
+    dist_sd_settl <- 0.0001
+  }
+  
+  #Second: Using a MLE to estimate the movement mode likelihood at each step
+  #Remember to go back and incorporate zero inflation as described in the vignette (if it's necessary after getting rid of mort locations)
+  
+  mu0 <- c(dist_mean_settl, dist_mean_disp) # step mean (two parameters: one for each state)
+  
+  sigma0 <- c(dist_sd_settl, dist_sd_disp) # step SD
+  
+  #Zero inflation code
+  #I do not expect the proportion of zero steps to differ between movement modes
+  #If there are zero steps, include zeromass0 as a step parameter. If not, don't
+  whichzero <- which(i$step == 0)
+  proportion_zero <- length(whichzero)/nrow(i)
+  
+  if(proportion_zero != 0) {
+    zeromass0 <- c(proportion_zero, proportion_zero) # step zero-mass
+    stepPar0 <- c(mu0, sigma0, zeromass0)
+  } else {
+    stepPar0 <- c(mu0, sigma0)
+  }
+  
+  angleMean0 <- c(rel_angle_mean_settl, rel_angle_mean_disp) # angle mean
+  
+  kappa0 <- c(1,1) # angle concentration
+  anglePar0 <- c(angleMean0, kappa0)
+  
+  #Bug testing code
+  i$ID %>% unique() %>% paste0("ID: ", .) %>% print()
+  #paste0("Dispersal Mean:", dist_mean_disp) %>% print()
+  #paste0("Settled Mean:", dist_mean_settl) %>% print()
+  #paste0("Dispersal SD:", dist_sd_disp) %>% print()
+  #paste0("Settled SD:", dist_sd_settl) %>% print()
+  #paste0("Dispersal Angle:", rel_angle_mean_disp) %>% print()
+  #paste0("Settled Angle:", rel_angle_mean_settl) %>% print()
+  #paste0("Proportion of zero steps:", proportion_zero) %>% print()
+  
+  ## call to fitting function
+   fitHMM(data = i, nbStates=2, stepPar0 = stepPar0,
+                           anglePar0 = anglePar0) %>%
+     return()
+}
+
+movehmm_objects <- traj_list %>% map(hmm_fitter)
+```
+
+Find the first step where it's more likely that the bird is settled than dispersing
+
+This is where shit gets weird. I'm going to use these model likelihoods to make a fake modpartltraj object, convert my existing trajectories to ltrajs, and then use adehabitat's partmod.ltraj function to find out where the ideal partition point is
+```{r}
+moveHMM_modpartltraj_convert <- function(i){
+  i %>%
+    stateProbs() %>% 
+    as.data.frame() %>%
+    rename(mod.1 = V1, mod.2 = V2) %>%
+    as.matrix() ->
+    t
+  
+  indiceNA <- c(1:nrow(t))
+  
+  class(t) <- "modpartltraj"
+  #There should be no NAs in these model likelihoods, so I set all rows to nna
+  attr(t, "nna.places") <- indiceNA 
+  return(t)
+}
+
+movehmm_objects %>%
+  map(moveHMM_modpartltraj_convert) ->
+  modpartltraj_objects
+```
+
+Now converting to a ltraj
+```{r}
+fit_traj <- function(t){ #making a map-able function to fit a trajectory to each dataframe
+  indiv <- t %>% 
+    pull(ID) %>%
+    unique() #creating the trajectory id
+  txy <- cbind(t$x, t$y) #creating a dataframe of x and y coords for the traj
+  as.ltraj(xy = txy, date = t$DateTime, id = indiv) %>% return() #create a trajectory and return to the list
+}
+ltraj_list <- traj_list %>% map(fit_traj)
+```
+
+For these trajectories, there is no single likely transition from one movement mode to another.
+Many of these birds likely died in the middle of the dispersal movement (I'll make individual determinations later)
+
+Trajectories that aren't fitting: 
+2: all steps are dispersing 2019.172587
+3: all steps are dispersing "2019.172591"
+5: all steps are dispersing "2019.172598"
+5: all steps are dispersing "2019.172600"
+10: all steps are dispersing "2019.172615"
+29: algorithim broke 2019.174272
+30: all steps are dispersing "2019.174277"
+31: delayed start to dispersal broke algorithm "2019.174280"
+
+```{r}
+ltraj_list[[2]] <- NULL; modpartltraj_objects[[2]] <- NULL
+ltraj_list[[3]] <- NULL; modpartltraj_objects[[3]] <- NULL
+ltraj_list[[5]] <- NULL; modpartltraj_objects[[5]] <- NULL
+ltraj_list[[5]] <- NULL; modpartltraj_objects[[5]] <- NULL
+ltraj_list[[10]] <- NULL; modpartltraj_objects[[10]] <- NULL
+ltraj_list[[29]] <- NULL; modpartltraj_objects[[29]] <- NULL
+ltraj_list[[30]] <- NULL; modpartltraj_objects[[30]] <- NULL
+ltraj_list[[31]] <- NULL; modpartltraj_objects[[31]] <- NULL
+```
+
+Using adehabitat's partmod.ltraj function to find out where the ideal partition point is
+```{r}
+partition_traj <- function(i){
+  print(i)
+  names(ltraj_list[i]) %>% print()
+  ltraj_list[[i]] %>%
+    partmod.ltraj(tr = ., 
+                  npart = 2, 
+                  mods = modpartltraj_objects[[i]], 
+                  na.manage = "locf")
+}
+
+partitioned_trajectories <- 1:length(ltraj_list) %>% map(partition_traj) 
+```
+
+
+Now that I have these trajectory segments, I use them to create a column for the response variable
+All locations in the first segment: 0
+The first location in the second segment: 1
+The remainder of locations in the second segment: 2
+
+A loop to turn these segments into a table of groups that I can use as dependent variables in a regression
+NOTE: "All belonging to the second group" only returns the daily points
+
+Start by defining empty vectors that I can append data to
+```{r}
+s_Sat_ID <- c(); s_DateTime = c(); s_reg_group = c(); s_x = c(); s_y = c(); s_dist = c()
+```
+
+```{r}
+for (i in 1:length(partitioned_trajectories)){
+  seg <- partitioned_trajectories[[i]]
+  #Specify the first of the second segment
+  s_DateTime <- seg$ltraj[[2]]$date[[1]] %>% append(s_DateTime,.)
+  s_x <- seg$ltraj[[2]]$x[[1]] %>% append(s_x,.)
+  s_y <- seg$ltraj[[2]]$y[[1]] %>% append(s_y,.)
+  s_dist <- seg$ltraj[[2]]$dist[[1]] %>% append(s_dist,.)
+  s_Sat_ID <- names(ltraj_list)[i] %>% append(s_Sat_ID,.)
+  s_reg_group <- 1 %>% append(s_reg_group,.)
+  
+  #Code to add in everything that happens in the second segment, not including the first point
+  second_segment <- seg$ltraj[[2]][2:nrow(seg$ltraj[[2]]),]
+  s_DateTime <- second_segment$date %>% append(s_DateTime,.)
+  s_x <- second_segment$x %>% append(s_x,.)
+  s_y <- second_segment$y %>% append(s_y,.)
+  s_dist <- second_segment$dist %>% append(s_dist,.)
+  third_length <- second_segment$date %>% length
+  s_Sat_ID <- names(ltraj_list)[i] %>% rep(times = third_length) %>% append(s_Sat_ID,.)
+  s_reg_group <- 2 %>% rep(times = third_length) %>% append(s_reg_group,.)
+  
+  #Specify all belonging to the first segment
+  s_DateTime <- seg$ltraj[[1]]$date %>% append(s_DateTime,.)
+  s_x <- seg$ltraj[[1]]$x %>% append(s_x,.)
+  s_y <- seg$ltraj[[1]]$y %>% append(s_y,.)
+  s_dist <- seg$ltraj[[1]]$dist %>% append(s_dist,.)
+  second_length <- seg$ltraj[[1]]$date %>% length
+  s_Sat_ID <- names(ltraj_list)[i] %>% rep(times = second_length) %>% append(s_Sat_ID,.)
+  s_reg_group <- 0 %>% rep(times = second_length) %>% append(s_reg_group,.)
+  
+  #Debugging code
+  #print(i)
+  #print(length(s_DateTime))
+  #print(length(s_reg_group))
+}
+```
+
+use all these vectors to create a dataframe 
+```{r}
+reg_groups <- tibble(Haukos_SatID = s_Sat_ID, DateTime = s_DateTime, x = s_x, y = s_y, reg_group = s_reg_group, dist = s_dist)
+```
+
+Removing all points from certain trajectories that broke because they were all dispersal points or broke for other reasons
+
+```{r}
+reg_groups %>%
+  filter(Haukos_SatID != "2019.172604") %>% # broken due to long pause before dispersal
+  filter(Haukos_SatID != "2019.172610") %>% # broken due to belated dispersal movement
+  filter(Haukos_SatID != "2019.172597") %>% #all dispersal
+  filter(Haukos_SatID != "2019.172602") %>% #didn't work
+  filter(Haukos_SatID != "2019.172611") %>% #doesn't fit pattern
+  filter(Haukos_SatID != "2019.172616") %>% #pattern is broken
+  filter(Haukos_SatID != "2019.172636a") %>% #didn't work
+  filter(Haukos_SatID != "2019.174255") %>% #all dispersal
+  filter(Haukos_SatID != "2019.174256") %>% #pattern is broken
+  filter(Haukos_SatID != "2019.174268") -> #all points are dispersing
+  reg_groups
+```
+
+
+And writing settlement and dispersing points to shapefiles
+Settlement points
+```{r}
+reg_groups %>%
+  filter(reg_group == 1) %>%
+  st_as_sf(coords = c("x", "y"), crs = 5070) %>%
+  st_write(dsn = here_file("Projects", "Dispersal_corridors", "Dispersal_stats_redo"), layer = "settlement_locations_2019", driver = "ESRI Shapefile")
+```
+
+Dispersing points
+```{r}
+reg_groups %>%
+  filter(reg_group == 0) %>%
+  st_as_sf(coords = c("x", "y"), crs = 5070) %>%
+  st_write(dsn = here_file("Projects", "Dispersal_corridors", "Dispersal_stats_redo"), layer = "dispersal_locations_2019", driver = "ESRI Shapefile")
+```

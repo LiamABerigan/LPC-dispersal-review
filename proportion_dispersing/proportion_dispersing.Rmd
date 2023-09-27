@@ -1,0 +1,149 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r}
+library(tidyverse)
+library(sf)
+library(googlesheets4)
+library(there)
+library(lubridate)
+```
+
+
+```{r}
+lpc_gps <- read_csv(here_file("used_available_toolshare", "sat_locations_clean", "sat_locations_2019-11-10.csv"), col_types = cols(Haukos_SatID = col_character()))
+
+lpc_gps$Haukos_SatID %>%
+  str_pad(width = 11, side = "right", pad = "0") ->
+  lpc_gps$Haukos_SatID
+
+# lpc_gps %>%
+#   filter(!is.na(Latitude)) %>%
+#   st_as_sf(coords = c("Longitude", "Latitude"), crs = 4326) %>%
+#   st_transform(5070)->
+#   lpc_gps_sf
+```
+
+
+```{r}
+banding_2019 <- read_sheet("1Ys9wnY8GV-kEO9q1hXWbvU3RGAzDe8L2lqWIX3wqQMw", "2019")
+banding_2018 <- read_sheet("1Ys9wnY8GV-kEO9q1hXWbvU3RGAzDe8L2lqWIX3wqQMw", "2018")
+banding_2017 <- read_sheet("1Ys9wnY8GV-kEO9q1hXWbvU3RGAzDe8L2lqWIX3wqQMw", "2017")
+banding_2016 <- read_sheet("1Ys9wnY8GV-kEO9q1hXWbvU3RGAzDe8L2lqWIX3wqQMw", "2016")
+
+banding <- rbind(banding_2016, banding_2017, banding_2018, banding_2019)
+
+banding %>%
+  filter(!is.na(BandNumber)) ->
+  banding
+```
+
+```{r}
+lpc_gps <- lpc_gps %>% 
+  left_join(dplyr::select(banding, Haukos_SatID, ReleaseSite, BandNumber, HandlingDate, ReleaseLocation))
+```
+
+```{r}
+mort_ks <- read_sheet("1WnEf_bP3W_cDHcIVL6bBAnnBMkLRDlpEi0mamg_2TU8", "KS Mortality")
+mort_co <- read_sheet("1WnEf_bP3W_cDHcIVL6bBAnnBMkLRDlpEi0mamg_2TU8", "CO Mortality")
+
+mort <- rbind(mort_ks, mort_co)
+```
+
+```{r}
+lpc_gps %>%
+  mutate(Date = mdy(Date),
+         DateTime = mdy_hm(DateTime)) %>% 
+  filter(Date > HandlingDate) %>%
+  left_join(dplyr::select(mort, BandNumber, Mortality_Detection_Date)) %>%
+  mutate(Mortality_Detection_Date = as_date(Mortality_Detection_Date)) %>%
+  mutate(Mortality_Detection_Date = replace_na(Mortality_Detection_Date, mdy("1/1/2021"))) %>%
+  filter(Date < Mortality_Detection_Date) -> 
+  lpc_gps
+```
+
+Did it survive until June in the year of release?
+```{r}
+lpc_gps <- lpc_gps %>% 
+  mutate(ReleaseYear = year(HandlingDate)) %>% 
+  group_by(Haukos_SatID) %>% 
+  mutate(survived_june = max(DateTime) >= mdy(paste0("6/1/", ReleaseYear))) %>% 
+  ungroup()
+```
+
+Did it move, at any point, greater than 5 km from its release site?
+```{r}
+release_sites <- st_read(here_file("Release_Features", "Release_sites.shp"))
+
+lpc_gps <- lpc_gps %>% 
+  rename(SiteName = ReleaseLocation) %>% 
+  mutate(SiteName = case_match(SiteName,
+                               "Las Vacas Blancas" ~ "White Cow",
+                               "L7" ~ "L7",
+                               "L4" ~ "L4",
+                               "P3" ~ "P3")) %>% 
+  st_as_sf(coords = c("Longitude", "Latitude"), crs = 4326)
+
+lpc_gps[1,] %>% View()
+
+lpc_gps$dist_to_release <- map(1:nrow(lpc_gps), function(x){ #units: m
+  st_distance(lpc_gps[x,], filter(release_sites, SiteName == pull(lpc_gps[x,], "SiteName")))
+})
+
+lpc_gps$dist_to_release <- unlist(lpc_gps$dist_to_release)
+
+```
+
+Set the criteria for a bird being counted
+```{r}
+lpc_gps <- lpc_gps %>% 
+  mutate(dist_over_5k = dist_to_release > 5000,
+         within_3months = DateTime - HandlingDate < 90)
+
+```
+
+Calculate the denominator
+```{r}
+lpc_gps %>% 
+  st_drop_geometry() %>% 
+  filter(survived_june & within_3months) %>% 
+  dplyr::select(Haukos_SatID, ReleaseSite, ReleaseYear) %>% 
+  distinct() %>% 
+  group_by(ReleaseYear) %>% 
+  tally()
+
+lpc_gps %>% 
+  st_drop_geometry() %>% 
+  filter(survived_june & within_3months) %>% 
+  dplyr::select(Haukos_SatID, ReleaseSite, ReleaseYear) %>% 
+  distinct() %>% 
+  group_by(ReleaseSite) %>% 
+  tally()
+```
+
+Calculate the numerator
+```{r}
+lpc_gps %>% 
+  st_drop_geometry() %>% 
+  filter(survived_june & within_3months & dist_over_5k) %>% 
+  dplyr::select(Haukos_SatID, ReleaseSite, ReleaseYear) %>% 
+  distinct() %>% 
+  group_by(ReleaseYear) %>% 
+  tally()
+
+lpc_gps %>% 
+  st_drop_geometry() %>% 
+  filter(survived_june & within_3months & dist_over_5k) %>% 
+  dplyr::select(Haukos_SatID, ReleaseSite, ReleaseYear) %>% 
+  distinct() %>% 
+  group_by(ReleaseSite) %>% 
+  tally()
+```
+
+
+```{r}
+saveRDS(lpc_gps, "lpc_gps.rds")
+```
+

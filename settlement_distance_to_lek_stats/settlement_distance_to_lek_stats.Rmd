@@ -1,0 +1,81 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r}
+library(tidyverse)
+library(sf)
+library(there)
+library(googlesheets4)
+library(nngeo)
+```
+
+```{r}
+settlement_locations <- bind_rows(st_read(here_file("Projects", "Dispersal_paper", "settlement_designations", "settlement_locations_2018.shp")),st_read(here_file("Projects", "Dispersal_paper", "settlement_designations", "settlement_locations_2019.shp"))) %>% st_transform(st_crs(5070))
+
+names(settlement_locations)[1] <- "Haukos_SatID"
+settlement_locations$dist <- NULL
+```
+
+```{r}
+banding_2019 <- read_sheet("1Ys9wnY8GV-kEO9q1hXWbvU3RGAzDe8L2lqWIX3wqQMw", "2019")
+banding_2018 <- read_sheet("1Ys9wnY8GV-kEO9q1hXWbvU3RGAzDe8L2lqWIX3wqQMw", "2018")
+banding_2017 <- read_sheet("1Ys9wnY8GV-kEO9q1hXWbvU3RGAzDe8L2lqWIX3wqQMw", "2017")
+banding_2016 <- read_sheet("1Ys9wnY8GV-kEO9q1hXWbvU3RGAzDe8L2lqWIX3wqQMw", "2016")
+
+banding <- rbind(banding_2016, banding_2017, banding_2018, banding_2019)
+
+banding %>%
+  filter(!is.na(BandNumber)) %>% 
+  dplyr::select(Haukos_SatID, Sex) ->
+  banding
+
+settlement_locations <- settlement_locations %>% 
+  left_join(banding)
+```
+
+```{r}
+leks <- st_read(here_file("Projects", "Dispersal_paper", "dispersal_characteristics_figure", "lek_sites.shp")) %>%
+  st_transform(5070)
+```
+
+```{r}
+settlement_locations$near_lek_dist <- st_nn(settlement_locations, leks, returnDist = TRUE) %>% 
+  .[[2]] %>% 
+  unlist()
+```
+
+```{r}
+
+settlement_locations %>% 
+  filter(Sex == "Male") %>% 
+  pull(near_lek_dist) %>% 
+  mean()/1000
+
+settlement_locations %>% 
+  filter(Sex == "Male") %>% 
+  pull(near_lek_dist) %>% 
+  sd()/1000
+
+settlement_locations %>% 
+  filter(Sex == "Male") %>% 
+  pull(near_lek_dist) %>% 
+  range()/1000
+
+settlement_locations %>% 
+  filter(Sex == "Female") %>% 
+  pull(near_lek_dist) %>% 
+  mean()/1000
+
+settlement_locations %>% 
+  filter(Sex == "Female") %>% 
+  pull(near_lek_dist) %>% 
+  sd()/1000
+
+settlement_locations %>% 
+  filter(Sex == "Female") %>% 
+  pull(near_lek_dist) %>% 
+  range()/1000
+```
+

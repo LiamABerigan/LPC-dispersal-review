@@ -1,0 +1,107 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+```{r}
+library(tidyverse)
+library(lubridate)
+library(ggplot2)
+library(ggpubr)
+```
+
+```{r}
+lpc_step_list <- readRDS(file = "lpc_track_list.rds")
+```
+
+Binding together the steps into a single df. Worst possible way to do this, but I don't want to change it and potentially break code
+```{r}
+lpc_track <- lpc_step_list[[1]]
+
+for (i in 2:length(lpc_step_list)) {
+  lpc_track <- rbind(lpc_track, lpc_step_list[[i]])
+}
+```
+
+Datetime cleanup
+```{r}
+lpc_track %>%
+  mutate(hms = as_datetime(t1_)) %>%
+  mutate(hms_cdt = hms - hours(5)) %>%
+  mutate(hms_cdt = hms::as_hms(hms_cdt)) %>%
+  mutate(hm_cdt = format(as.POSIXlt(hms_cdt), "%H:%M"))->
+  lpc_track
+```
+
+
+```{r}
+dispersal_plot_male <- ggplot(data = filter(lpc_track, Sex == "Male"), aes(x = as.character(hm_cdt), y = velocity/1000)) +
+  geom_boxplot() +
+  coord_cartesian(ylim = c(0, 10000/1000)) +
+  ggtitle("Male")  + 
+  theme_bw() +
+  theme(axis.title.x = element_blank()) +
+  #xlab("Movement initiation time (CDT)") +
+  ylab ("Velocity (km/hr)")
+
+dispersal_plot_female <- ggplot(data = filter(lpc_track, Sex == "Female"), aes(x = as.character(hm_cdt), y = velocity/1000)) +
+  geom_boxplot() +
+  coord_cartesian(ylim = c(0, 10000/1000)) +
+  ggtitle("Female") + 
+  xlab("Step initiation time (CDT)") +
+  ylab ("Velocity (km/hr)") +
+  theme_bw()
+  
+```
+
+```{r}
+ggarrange(dispersal_plot_male, dispersal_plot_female,
+          ncol = 1, nrow = 2)
+
+#ggsave("time_graph_combined_12_13_22.jpg", width = 7, height = 5)
+```
+
+Doing another graph, but with step length instead of velocity
+
+Prepping by getting rid of steps that are longer than they should be, and changing sl_ to be 1m when 0 so it can be log transformed 
+```{r}
+lpc_track_complete_steps <- lpc_track %>%
+  mutate(keep = FALSE) %>% 
+  mutate(keep = if_else(hm_cdt == "00:00" & dt_ == 6, T, keep)) %>% 
+  mutate(keep = if_else(hm_cdt != "00:00" & dt_ == 2, T, keep)) %>% 
+  filter(keep) %>% 
+  dplyr::select(-keep) %>% #This gets rid of 522 steps that don't have a different dt_
+  mutate(sl_ = if_else(sl_==0, 1, sl_))
+```
+
+Figure out what the outliers are so that I can mention them in the caption
+```{r}
+lpc_track_complete_steps %>% 
+  filter(sl_ > 30000) %>% 
+  dplyr::select(hm_cdt, sl_)
+```
+
+Making the plots
+```{r}
+steplength_plot_male <- ggplot(data = filter(lpc_track_complete_steps, Sex == "Male"), aes(x = as.character(hm_cdt), y = sl_/1000)) +
+  geom_boxplot() +
+  coord_cartesian(ylim = c(0, 30)) +
+  ggtitle("Male dispersal steps")  + 
+  theme_bw() +
+  theme(axis.title.x = element_blank()) +
+  #xlab("Movement initiation time (CDT)") +
+  ylab ("Step length (km)")
+  #scale_y_continuous(trans="identity", limits = c(.0001*1000, 100*1000))
+  
+steplength_plot_female <- ggplot(data = filter(lpc_track_complete_steps, Sex == "Female"), aes(x = as.character(hm_cdt), y = sl_/1000)) +
+  geom_boxplot() +
+  coord_cartesian(ylim = c(0, 30)) +
+  ggtitle("Female dispersal steps") + 
+  xlab("Step initiation time (CDT)") +
+  ylab ("Step length (km)") +
+  theme_bw()
+
+ggarrange(steplength_plot_male, steplength_plot_female,
+          ncol = 1, nrow = 2)
+
+ggsave("time_graph_combined_12_14_22.jpg", width = 7, height = 5)
+  

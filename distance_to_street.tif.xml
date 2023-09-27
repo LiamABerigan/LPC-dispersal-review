@@ -1,0 +1,2 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<metadata xml:lang="en"><Esri><CreaDate>20200615</CreaDate><CreaTime>17220200</CreaTime><ArcGISFormat>1.0</ArcGISFormat><SyncOnce>TRUE</SyncOnce><DataProperties><lineage><Process ToolSource="c:\program files (x86)\arcgis\desktop10.6\ArcToolbox\Toolboxes\Spatial Analyst Tools.tbx\EucDistance" Date="20200615" Time="172202">EucDistance street_all_5070 "D:\OneDrive - Kansas State University\Analysis\Projects\Dispersal_corridors\distance_to_street.tif" 100000 30 #</Process></lineage></DataProperties></Esri></metadata>

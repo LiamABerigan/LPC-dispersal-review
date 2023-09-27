@@ -1,0 +1,45 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r}
+library(tidyverse)
+library(terra)
+library(sf)
+library(tidyterra)
+library(mapview)
+```
+
+```{r}
+basemap <- rast("D:/OneDrive - University of Maine System/KansasAnalysis/Projects/Dispersal_paper/release_site_map/esri_lightgrey_release_basemap.tif") #"D:/OneDrive - University of Maine System/MaineAnalysis/Data/basemaps/esri_lightgrey/esri_lightgrey_36_48_4326.tif"
+
+national_grasslands <- st_read("D:/OneDrive - University of Maine System/KansasAnalysis/National_grasslands/CimCarrizoPastures.shp") %>% 
+  group_by(DISTRICT) %>% #Unite all patches in the same NG
+  summarise() %>% 
+  st_transform(terra::crs(basemap)) #important: all objects to be plotted must be in the same spatial reference
+
+# map_extent <- national_grasslands %>% 
+#   st_transform(5070) %>% 
+#   st_buffer(10000) %>% #buffer by 10km
+#   st_transform(terra::crs(basemap)) %>% 
+#   st_bbox()
+# 
+# basemap <- basemap %>% 
+#   crop(map_extent)
+
+# mapview(national_grasslands)
+```
+
+```{r}
+render_map <- ggplot() +
+  theme_void() + #gives you a completely blank background. Other themes can enable numbered axes, legends, etc.
+  geom_spatraster_rgb(data = basemap, maxcell = 1e07) + #RGB specifies that the raster represents a color picture 
+  geom_sf(data = national_grasslands, fill = NA) + #change color and fill using standard ggplot specifications
+  coord_sf(xlim = c(-104, -101), 
+           ylim = c(36, 38),
+           expand = FALSE)
+
+render_map
+```
+

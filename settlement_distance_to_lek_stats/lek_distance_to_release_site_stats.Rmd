@@ -1,0 +1,37 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+
+```{r}
+library(tidyverse)
+library(sf)
+library(there)
+library(mapview)
+```
+
+```{r}
+release_sites <- st_read(
+  dsn = here_file("Projects" , "Dispersal_paper", "dispersal_characteristics_figure"), 
+  layer = "Release_sites") %>% 
+  st_transform(st_crs(5070))
+
+leks <- st_read(here_file("Projects", "Dispersal_paper", "dispersal_characteristics_figure", "lek_sites.shp")) %>%
+  st_transform(5070)
+```
+
+```{r}
+mapview(release_sites) + mapview(leks)
+```
+
+
+```{r}
+release_site_matrix <- st_distance(release_sites, leks)
+
+min_dist_release_site <- apply(release_site_matrix,2,min)
+
+mean(min_dist_release_site)/1000 #units km
+sd(min_dist_release_site)/1000 #units km
+```
+

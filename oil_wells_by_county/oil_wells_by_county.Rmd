@@ -1,0 +1,28 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+
+```{r}
+library(tidyverse)
+library(sf)
+library(there)
+```
+
+```{r}
+oil_wells <- st_read(here_file("Anthropogenic_features", "Oil_wells", "wells_all_5070.shp"))
+counties <- st_read(here_file("Projects", "Dispersal_paper", "counties_5070.shp"))
+```
+
+
+```{r}
+oil_wells <- oil_wells %>% 
+  st_join(counties)
+
+oil_wells %>% 
+  group_by(NAME) %>% 
+  tally() %>% 
+  View()
+```
+
