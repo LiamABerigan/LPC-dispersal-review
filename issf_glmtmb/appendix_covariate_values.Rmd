@@ -1,0 +1,171 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+NOTA BENE: Giving up on this for the foreseeable future- I don't think I can provide enough info for readers to simulate from this without a complete walkthrough. Will likely need to be a seperate paper.
+
+```{r}
+library(raster)
+library(tidyverse)
+library(googlesheets4)
+library(sf)
+library(there) #fixed; some code is used to it being broken
+library(readr)
+library(lubridate)
+library(mapview)
+library(amt)
+library(adehabitatLT)
+library(hms)
+library(ggplot2)
+library(parallel)
+library(AICcmodavg)
+library(glmmTMB)
+library(broom.mixed)
+```
+
+Step length and turn angle distributions
+```{r}
+ssf_data_true <- ssf_data %>% 
+  filter(case_ == TRUE)
+
+ssf_data_true %>% 
+  group_by("Sex") %>% 
+  summarise(mn_sl = mean(sl_), #meters
+            sd_sl = sd(sl_),
+            mn_ta = mean(ta_), #radians
+            sd_ta = sd(ta_))
+
+sl_hist <- hist(ssf_data_true$sl_, breaks = 34, freq = FALSE)
+
+data.frame(range = paste0(sl_hist$breaks[1:34], " - ", sl_hist$breaks[2:35]),
+           density = sprintf("%.8f", sl_hist$density*100),
+           counts = sl_hist$counts) %>% 
+  write.csv("sl_dist.csv")
+
+ta_hist <- hist(ssf_data$ta_, breaks = 33, freq = FALSE)
+
+data.frame(range = paste0(ta_hist$breaks[1:32], " - ", ta_hist$breaks[2:33]),
+           density = sprintf("%.8f", ta_hist$density*100),
+           counts = ta_hist$counts) %>% 
+  write.csv("ta_dist.csv")
+```
+
+Plot the histograms and save them
+```{r}
+ggplot(ssf_data_true, aes(x = sl_/1000)) +
+  geom_histogram(breaks = sl_hist$breaks/1000, aes(y = after_stat(count)/nrow(ssf_data_true)), color = "black", fill = "grey") + #
+  theme_bw() +
+  ylab("Percent of steps") +
+  xlab("Step lengths (km)") +
+  scale_y_continuous(labels = scales::percent_format())
+
+ggsave(filename = "sl_dist.png", height = 7/1.5, width = 10/1.5)
+
+ggplot(ssf_data_true, aes(x = ta_)) +
+  geom_histogram(breaks = ta_hist$breaks, aes(y = after_stat(count)/nrow(ssf_data_true)), color = "black", fill = "grey") + #
+  theme_bw() +
+  ylab("Percent of turn angles") +
+  xlab("Turn angles (radians)") +
+  scale_y_continuous(labels = scales::percent_format())
+
+ggsave(filename = "ta_dist.png", height = 7/1.5, width = 10/1.5)
+```
+
+
+## Preparing candidate models using the untransformed data
+```{r}
+muff.candidate.set <- list()
+muff.candidate.set[[1]] <- glmmTMB(case_ ~ -1 + (1|step_id_), family = poisson, data = ssf_data, doFit = FALSE, map = list(theta=factor(c(NA))))
+
+muff.candidate.set[[2]] <- glmmTMB(case_ ~ -1 + log_sl_ + (1|step_id_), family = poisson, data = ssf_data, doFit = FALSE, map = list(theta=factor(c(NA))))
+
+muff.candidate.set[[3]] <- glmmTMB(case_ ~ -1 + prop_path_crop + log_sl_ + (1|step_id_) + (0 + prop_path_crop_z|Haukos_SatID), family = poisson, data = ssf_data, doFit = FALSE, map = list(theta=factor(c(NA, 1))))
+
+muff.candidate.set[[4]] <- glmmTMB(case_ ~ -1 + prop_path_shrub + log_sl_ + (1|step_id_) + (0 + prop_path_shrub_z|Haukos_SatID), family = poisson, data = ssf_data, doFit = FALSE, map = list(theta=factor(c(NA, 1))))
+
+muff.candidate.set[[5]] <- glmmTMB(case_ ~ -1 + prop_path_dev_open + log_sl_ + (1|step_id_) + (0 + prop_path_dev_open_z|Haukos_SatID), family = poisson, data = ssf_data, doFit = FALSE, map = list(theta=factor(c(NA, 1))))
+
+muff.candidate.set[[6]] <- glmmTMB(case_ ~ -1 + prop_path_grass + log_sl_ + (1|step_id_) + (0 + prop_path_grass_z|Haukos_SatID), family = poisson, data = ssf_data, doFit = FALSE, map = list(theta=factor(c(NA, 1))))
+
+muff.candidate.set[[7]] <- glmmTMB(case_ ~ -1 + prop_path_crp + log_sl_ + (1|step_id_) + (0 + prop_path_crp_z|Haukos_SatID), family = poisson, data = ssf_data, doFit = FALSE, map = list(theta=factor(c(NA, 1))))
+
+muff.candidate.set[[8]] <- glmmTMB(case_ ~ -1 + prop_path_forest + log_sl_ + (1|step_id_) + (0 + prop_path_forest_z|Haukos_SatID), family = poisson, data = ssf_data, doFit = FALSE, map = list(theta=factor(c(NA, 1))))
+
+muff.candidate.set[[9]] <- glmmTMB(case_ ~ -1 + prop_path_barren + log_sl_ + (1|step_id_) + (0 + prop_path_barren_z|Haukos_SatID), family = poisson, data = ssf_data, doFit = FALSE, map = list(theta=factor(c(NA, 1))))
+
+muff.candidate.set[[10]] <- glmmTMB(case_ ~ -1 + prop_path_water + log_sl_ + (1|step_id_) + (0 + prop_path_water_z|Haukos_SatID), family = poisson, data = ssf_data, doFit = FALSE, map = list(theta=factor(c(NA, 1))))
+
+muff.candidate.set[[11]] <- glmmTMB(case_ ~ -1 + prop_path_wetland + log_sl_ + (1|step_id_) + (0 + prop_path_wetland_z|Haukos_SatID), family = poisson, data = ssf_data, doFit = FALSE, map = list(theta=factor(c(NA, 1))))
+
+muff.candidate.set[[12]] <- glmmTMB(case_ ~ -1 + prop_path_dev_lmh + log_sl_ + (1|step_id_) + (0 + prop_path_dev_lmh_z|Haukos_SatID), family = poisson, data = ssf_data, doFit = FALSE, map = list(theta=factor(c(NA, 1))))
+
+muff.candidate.set[[13]] <- glmmTMB(case_ ~ -1 + cross_secondary + log_sl_ + (1|step_id_) + (0 + cross_secondary_z|Haukos_SatID), family = poisson, data = ssf_data, doFit = FALSE, map = list(theta=factor(c(NA, 1))))
+
+muff.candidate.set[[14]] <- glmmTMB(case_ ~ -1 + cross_street + log_sl_ + (1|step_id_) + (0 + cross_street_z|Haukos_SatID), family = poisson, data = ssf_data, doFit = FALSE, map = list(theta=factor(c(NA, 1))))
+
+muff.candidate.set[[15]] <- glmmTMB(case_ ~ -1 + cross_transmission_line + log_sl_ + (1|step_id_) + (0 + cross_transmission_line_z|Haukos_SatID), family = poisson, data = ssf_data, doFit = FALSE, map = list(theta=factor(c(NA, 1))))
+
+muff.candidate.set[[16]] <- glmmTMB(case_ ~ -1 + log_distance_to_secondary + log_sl_ + (1|step_id_) + (0 + log_distance_to_secondary_z|Haukos_SatID), family = poisson, data = ssf_data, doFit = FALSE, map = list(theta=factor(c(NA, 1))))
+
+#Street is probably going to have to be excluded (not converging). Actually, it looks okay?
+muff.candidate.set[[17]] <- glmmTMB(case_ ~ -1 + log_distance_to_street + log_sl_ + (1|step_id_) + (0 + log_distance_to_street_z|Haukos_SatID), family = poisson, data = ssf_data, doFit = FALSE, map = list(theta=factor(c(NA, 1))))
+
+muff.candidate.set[[18]] <- glmmTMB(case_ ~ -1 + log_distance_to_well + log_sl_ + (1|step_id_) + (0 + log_distance_to_well_z|Haukos_SatID), family = poisson, data = ssf_data, doFit = FALSE, map = list(theta=factor(c(NA, 1))))
+
+muff.candidate.set[[19]] <- glmmTMB(case_ ~ -1 + log_distance_to_transmission_line + log_sl_ + (1|step_id_) + (0 + log_distance_to_transmission_line_z|Haukos_SatID), family = poisson, data = ssf_data, doFit = FALSE, map = list(theta=factor(c(NA, 1))))
+
+muff.candidate.set[[20]] <- glmmTMB(case_ ~ -1 + shrub_binary + log_sl_ + (1|step_id_) + (0 + shrub_binary_z|Haukos_SatID), family = poisson, data = ssf_data, doFit = FALSE, map = list(theta=factor(c(NA, 1))))
+
+muff.candidate.set[[21]] <- glmmTMB(case_ ~ -1 + dev_open_binary + log_sl_ + (1|step_id_) + (0 + dev_open_binary_z|Haukos_SatID), family = poisson, data = ssf_data, doFit = FALSE, map = list(theta=factor(c(NA, 1))))
+
+muff.candidate.set[[22]] <- glmmTMB(case_ ~ -1 + grass_binary + log_sl_ + (1|step_id_) + (0 + grass_binary_z|Haukos_SatID), family = poisson, data = ssf_data, doFit = FALSE, map = list(theta=factor(c(NA, 1))))
+
+muff.candidate.set[[23]] <- glmmTMB(case_ ~ -1 + crp_binary + log_sl_ + (1|step_id_) + (0 + crp_binary_z|Haukos_SatID), family = poisson, data = ssf_data, doFit = FALSE, map = list(theta=factor(c(NA, 1))))
+```
+
+## Fitting the candidate models
+
+Set the variance as constant at 1000 and fit the model
+```{r}
+fit_glmm_constant_variance <- function(x){
+  #Fix the standard deviation of the first random term, which is the (1|step_id_) component in the above model equation
+  #set the variance to 1000 by setting its log (sd) to log(1000)
+  x$parameters$theta[1] <- log(1e3)
+  
+  #We need to tell glmmTMB not to change the variance by setting it to NA:
+  #now set when I define each individual function, so this isn't necessary here
+  #x$mapArg <- list(theta=factor(c(NA)))
+  
+  #print so I know which model to attribute error code to
+  x$fr %>% names() %>% print()
+  
+  #Then fit the model and look at the results:
+  glmmTMB:::fitTMB(x) %>% 
+    return()
+}
+
+muff.candidate.set %>%
+  map(.f = fit_glmm_constant_variance) ->
+  muff.model.set
+
+#model_figure <- fit_glmm_constant_variance(model_figure)
+```
+
+```{r}
+covariate_results <- map2(muff.model.set, 1:length(muff.model.set), function(x, y){
+  broom::tidy(x) %>% 
+    mutate(model_num = y, .before = effect)
+}) %>% 
+  bind_rows() %>% 
+  mutate(estimate = sprintf("%.6f", estimate),
+         std.error = sprintf("%.6f", std.error)) %>% 
+  filter(effect == "fixed")
+
+write.csv(covariate_results, "appendix_covariate_results.csv")
+```
+
+```{r}
+muff.model.set[[23]]$call$formula
+```
+

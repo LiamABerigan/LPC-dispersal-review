@@ -1,0 +1,993 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+Running in R 4.0.5
+
+```{r}
+library(raster)
+library(tidyverse)
+library(googlesheets4)
+library(sf)
+library(there) #fixed; some code is used to it being broken
+library(readr)
+library(lubridate)
+library(mapview)
+library(amt)
+library(adehabitatLT)
+library(hms)
+library(ggplot2)
+library(parallel)
+library(AICcmodavg)
+```
+
+## Importing and cleaning data
+
+Sat locations
+Taking only those birds with at least 140 GPS fixes (two weeks on the ground)
+```{r}
+sat_locations <- read_csv(here_file("used_available_toolshare", "sat_locations_clean", "sat_locations_2019-11-10.csv"), col_types = cols(Haukos_SatID = col_character()))
+
+sat_locations$Haukos_SatID %>%
+  str_pad(width = 11, side = "right", pad = "0") ->
+  sat_locations$Haukos_SatID
+
+sat_locations %>%
+  group_by(Haukos_SatID) %>%
+  mutate(count = n()) %>%
+  filter(count > 139) %>%
+  dplyr::select(-count) %>%
+  ungroup() ->
+  sat_locations
+```
+
+Banding info for other covariates
+```{r}
+banding_2019 <- read_sheet("1Ys9wnY8GV-kEO9q1hXWbvU3RGAzDe8L2lqWIX3wqQMw", "2019")
+banding_2018 <- read_sheet("1Ys9wnY8GV-kEO9q1hXWbvU3RGAzDe8L2lqWIX3wqQMw", "2018")
+banding_2017 <- read_sheet("1Ys9wnY8GV-kEO9q1hXWbvU3RGAzDe8L2lqWIX3wqQMw", "2017")
+banding_2016 <- read_sheet("1Ys9wnY8GV-kEO9q1hXWbvU3RGAzDe8L2lqWIX3wqQMw", "2016")
+
+banding <- rbind(banding_2016, banding_2017, banding_2018, banding_2019)
+
+banding %>%
+  filter(!is.na(BandNumber)) ->
+  banding
+```
+
+Attaching capture data
+```{r}
+sat_locations %>%
+  mutate(Date = mdy(Date),
+         DateTime = mdy_hm(DateTime),
+         Transmitter = "SAT-PTT") %>%
+  left_join(dplyr::select(banding, Haukos_SatID, BandNumber, Sex, ReleaseSite, ReleaseLocation, ReleaseYear, HandlingDate)) %>%
+  dplyr::select(BandNumber, Haukos_SatID, Date, DateTime, Latitude, Longitude, Sex, ReleaseSite, ReleaseLocation, ReleaseYear, HandlingDate) ->
+  sat_locations
+```
+
+Importing dispersal settlement dates so I can narrow down to dispersal locations
+```{r}
+st_read(dsn = here_file("Projects", "Dispersal_paper", "settlement_designations"), layer = "settlement_locations_2018") %>%
+  st_drop_geometry() %>%
+  transmute(Haukos_SatID = Hks_SID,
+         settlement_date = DateTim) ->
+  settlement_2018
+
+st_read(dsn = here_file("Projects", "Dispersal_paper", "settlement_designations"), layer = "settlement_locations_2019") %>%
+  st_drop_geometry() %>%
+transmute(Haukos_SatID = Hks_SID,
+         settlement_date = DateTim) ->
+  settlement_2019
+
+settlement_dates <- rbind(settlement_2018, settlement_2019)
+```
+
+A large proportion of those missing dispersal end dates have trajectories ending before 7/31, and were discarded as early deaths. I manually added those in as a settlement date of Jan 1 2021. Removed 7 with an NA settlement date, where the end of the dispersal movement could not be determined
+
+EXCEPT some large portion of these birds settle before 7/31 and then die. I need to figure out how to discern those locations. Probably means revisiting the original algorithm?
+
+^Which I did
+
+Trajectories where all points are dispersing: set end date to 1/1/2021
+Trajectories which we can't use, either because it doesn't fit the pattern or the algorithm couldn't determine a breaking point: set end date to 1/1/1970
+
+2019.172607 died too early (5 days on ground) and so is removed here as well
+As did:
+2018.172610
+2018.172626
+2018.172639
+2018.172641
+
+One excluded (2019.172591) because they didn't reach an end point within the timeframe of the summer
+
+```{r}
+textConnection(
+"Haukos_SatID, settlement_date
+2018.172603, 1/1/1970
+2018.172630, 1/1/2021
+2018.172637, 1/1/1970
+2018.172640, 1/1/2021
+2018.172642, 1/1/1970
+2018.172593, 1/1/2021
+2018.172596, 1/1/2021
+2018.172608, 1/1/2021
+2018.172609, 1/1/2021
+2018.172611, 1/1/2021
+2018.172621, 1/1/2021
+2019.172587, 1/1/2021
+2019.172598, 1/1/2021
+2019.172600, 1/1/2021
+2019.172615, 1/1/2021
+2019.174277, 1/1/2021
+2019.172597, 1/1/2021
+2019.172602, 1/1/1970
+2019.172611, 1/1/1970
+2019.172616, 1/1/1970
+2019.172636a, 1/1/1970
+2019.174255, 1/1/2021
+2019.174256, 1/1/1970
+2019.174268, 1/1/2021
+2019.172591, 1/1/1970
+2019.172604, 1/1/1970
+2019.172610, 1/1/1970
+2019.174272, 1/1/1970
+2019.174280, 1/1/1970
+2019.172607, 1/1/1970
+2018.172610, 1/1/1970
+2018.172626, 1/1/1970
+2018.172639, 1/1/1970
+2018.172641, 1/1/1970
+") %>% 
+  read.csv(strip.white = TRUE, colClasses = c("character", "character")) %>%
+  mutate(settlement_date = mdy(settlement_date)) ->
+  settlement_dates_appended
+  
+```
+
+Using settlement dates to constrain locations to those before settlement occurs
+```{r}
+settlement_dates <- rbind(settlement_dates, settlement_dates_appended)
+
+sat_locations %>%
+  left_join(settlement_dates) %>%
+  filter(Date < settlement_date) ->
+  sat_locations
+```
+
+Cleaning the remaining locations
+
+Mortality
+```{r}
+mort_ks <- read_sheet("1WnEf_bP3W_cDHcIVL6bBAnnBMkLRDlpEi0mamg_2TU8", "KS Mortality")
+mort_co <- read_sheet("1WnEf_bP3W_cDHcIVL6bBAnnBMkLRDlpEi0mamg_2TU8", "CO Mortality")
+
+mort <- rbind(mort_ks, mort_co)
+```
+
+Get rid of all locations on and prior to the release date,
+Get rid of all locations on and following the mort date
+```{r}
+sat_locations %>%
+  filter(Date > HandlingDate) %>%
+  left_join(dplyr::select(mort, BandNumber, Mortality_Detection_Date)) %>%
+  mutate(Mortality_Detection_Date = as_date(Mortality_Detection_Date)) %>%
+  mutate(Mortality_Detection_Date = replace_na(Mortality_Detection_Date, mdy("1/1/2021"))) %>%
+  filter(Date < Mortality_Detection_Date) -> 
+  sat_locations
+```
+
+Checked here: the dates of all steps are reasonable and fall within summers of 2018 and 2019
+
+## Resampling to 1 location per day
+
+New code: resampling these to a single location per bird per day, to remove variation in step length between hours
+
+This is due to a) this not working otherwise b) Erik making the valid point that habitat selection changes between behavioral modes, and there are multiple behavioral modes per day
+
+Keeping with all locations at 23:00 GMT, as 22:00 to 23:00 has the lowest movement speed of any time period. I'm basically measuring steps from night roost to night roost
+```{r}
+sat_locations %>%
+  filter(hour(DateTime) == 23) -> sat_locations
+```
+
+## Preparing a step selection function
+
+Start by reading into the amt track format
+```{r}
+sat_locations %>%
+  st_as_sf(coords = c("Longitude", "Latitude"), crs = 4326) %>%
+  st_transform(5070) %>%
+  st_coordinates() ->
+  coords_5070
+
+sat_locations <- cbind(sat_locations, coords_5070)
+
+sat_locations %>%
+  dplyr::select(BandNumber, DateTime) %>%
+  duplicated() -> 
+  duplicated_indicies
+
+sat_locations[!duplicated_indicies,] -> sat_locations
+  
+sat_locations %>%
+  make_track(.x = X, .y = Y, .t = DateTime, bird = BandNumber, crs = sp::CRS("+init=epsg:5070"), all_cols = TRUE)  -> 
+  lpc_track
+
+```
+
+Nesting the dataframe into a list within another dataframe
+```{r}
+lpc_movements <- lpc_track %>% nest(tracks = -"BandNumber")
+```
+
+Converting to steps
+```{r}
+lpc_movements %>%
+  mutate(steps = map(tracks, function(x)
+    x %>%
+      steps(keep_cols = 'start'))) ->
+  lpc_movements
+```
+
+Calculating velocity for the steps
+```{r}
+lpc_movements %>%
+  mutate(steps = map(steps, function(x)
+    x %>%
+      mutate(velocity = sl_/as.numeric(dt_)))) -> 
+  lpc_movements
+```
+
+Now for the tricky part: I'm going to create a separate steps_xyt object for each time, so that I can take advantage of time-specific step length distributions
+Each column is named after the UTC starting time for the step
+
+Update: This did NOT WORK. Instead using an integrated step selection function to account for the interaction between time and step length during the conditional logistic regression phase, as specified in the vignette at https://arxiv.org/pdf/1805.03227.pdf
+
+Update: This also didn't work, so I just did a daily resampling to remove the hourly variation
+
+```{r}
+#Removing individuals with 1 step, as this causes errors
+lpc_movements %>%
+  mutate(num_steps = map(steps, nrow)) %>%
+  filter(num_steps > 1) ->
+  lpc_movements
+
+lpc_movements %>%
+  mutate(steps_full = map(steps, function(x)
+    x %>%
+      random_steps(n = 9))) -> 
+  lpc_movements
+```
+
+## Extract covariates to each step
+Reading those covariates in
+
+Key for landcov analyses:
+0 No data
+1 Crop
+2 Forest/Woody wetland
+3 Shrubland
+4 Barren
+6 Water
+7 Wetland
+8 Developed (open space, roads)
+9 Developed (low, mid, high)
+10 Grassland/Pasture
+11 CRP
+
+```{r}
+dist_secondary <- raster(here_file("Projects", "Dispersal_paper", "distance_to_secondary.tif"))
+
+dist_street <- raster(here_file("Projects", "Dispersal_paper", "distance_to_street.tif"))
+
+dist_well <- raster(here_file("Projects", "Dispersal_paper", "distance_to_well.tif"))
+
+dist_transmission_line <- raster(here_file("Projects", "Dispersal_paper", "distance_to_transmission_line.tif"))
+
+cross_secondary <- raster(here_file("Projects", "Dispersal_paper", "crossing_secondary.tif"))
+
+cross_street <- raster(here_file("Projects", "Dispersal_paper", "crossing_street.tif"))
+
+cross_transmission_line <- raster(here_file("Projects", "Dispersal_paper", "crossing_transmission_line.tif"))
+
+landcov_2018 <- raster(here_file("Projects", "Dispersal_paper", "landcover_classification", "dispersing_landcov_2018_5070.tif")) #"Projects", "Dispersal_corridors",
+names(landcov_2018) <- "landcov_18"
+
+landcov_2019 <- raster(here_file("Projects", "Dispersal_paper", "landcover_classification", "dispersing_landcov_2019_5070.tif"))
+names(landcov_2019) <- "landcov_19" #"Projects", "Dispersal_corridors",
+
+patchsize_2018 <- raster(here_file("Projects", "Dispersal_paper", "landcover_classification", "dispersing_landcov_2018_patch_size.tif")) #"Projects", "Dispersal_corridors",
+names(patchsize_2018) <- "patch_size_18"
+
+patchsize_2019 <- raster(here_file("Projects", "Dispersal_paper", "landcover_classification", "dispersing_landcov_2019_patch_size.tif"))#"Projects", "Dispersal_corridors",
+names(patchsize_2019) <- "patch_size_19"
+```
+
+Join the covariates to the endpoint of each step
+```{r}
+lpc_movements %>%
+  mutate(steps_covariates = map(steps_full, function(x)
+    x %>%
+      extract_covariates(dist_secondary))) -> 
+  lpc_movements
+
+lpc_movements %>%
+  mutate(steps_covariates = map(steps_covariates, function(x)
+    x %>%
+      extract_covariates(dist_street))) -> 
+  lpc_movements
+
+lpc_movements %>%
+  mutate(steps_covariates = map(steps_covariates, function(x)
+    x %>%
+      extract_covariates(dist_well))) -> 
+  lpc_movements
+
+lpc_movements %>%
+  mutate(steps_covariates = map(steps_covariates, function(x)
+    x %>%
+      extract_covariates(dist_transmission_line))) -> 
+  lpc_movements
+
+save(lpc_movements, file = "lpc_movements.RData")
+```
+
+Using parallel processing to determine when LPC cross obstacles
+First: crossing secondary roads
+```{r}
+numCores <- detectCores() - 2
+numCores
+
+cl <- makeCluster(numCores)
+
+lpc_movements$steps_covariates -> steps_covariates
+
+clusterExport(cl, "steps_covariates")
+clusterExport(cl, "cross_secondary")
+
+clusterEvalQ(cl, {
+  library(tidyverse)
+  library(amt)
+})
+
+clusterApplyLB(cl, steps_covariates, function(x)
+    x %>%
+      extract_covariates_along(cross_secondary)) -> along_secondary
+
+save(along_secondary, file = "along_secondary.RData")
+stopCluster(cl)
+```
+
+Second: crossing streets
+```{r}
+numCores <- detectCores() - 1
+numCores
+
+cl <- makeCluster(numCores)
+
+clusterExport(cl, "steps_covariates")
+clusterExport(cl, "cross_street")
+
+clusterEvalQ(cl, {
+  library(tidyverse)
+  library(amt)
+})
+
+clusterApplyLB(cl, steps_covariates, function(x)
+    x %>%
+      extract_covariates_along(cross_street)) -> along_street
+
+save(along_street, file = "along_street.RData")
+stopCluster(cl)
+```
+
+Third: crossing transmission lines
+```{r}
+numCores <- detectCores() - 1
+numCores
+
+cl <- makeCluster(numCores)
+
+clusterExport(cl, "steps_covariates")
+clusterExport(cl, "cross_transmission_line")
+
+clusterEvalQ(cl, {
+  library(tidyverse)
+  library(amt)
+})
+
+clusterApplyLB(cl, steps_covariates, function(x)
+    x %>%
+      extract_covariates_along(cross_transmission_line)) -> along_transmission_line
+
+save(along_transmission_line, file = "along_transmission_line.RData")
+stopCluster(cl)
+```
+
+Fourth: identity of 2018 landcover pixels crossed
+```{r}
+numCores <- detectCores() - 1
+numCores
+
+cl <- makeCluster(numCores)
+
+clusterExport(cl, "steps_covariates")
+clusterExport(cl, "landcov_2018")
+
+clusterEvalQ(cl, {
+  library(tidyverse)
+  library(amt)
+})
+
+clusterApplyLB(cl, steps_covariates, function(x)
+    x %>%
+      extract_covariates_along(landcov_2018)) -> along_landcov_18
+
+save(along_landcov_18, file = "along_landcov_18.RData")
+stopCluster(cl)
+```
+
+Fifth: identity of 2019 landcover pixels crossed
+```{r}
+numCores <- detectCores() - 1
+numCores
+
+cl <- makeCluster(numCores)
+
+clusterExport(cl, "steps_covariates")
+clusterExport(cl, "landcov_2019")
+
+clusterEvalQ(cl, {
+  library(tidyverse)
+  library(amt)
+})
+
+clusterApplyLB(cl, steps_covariates, function(x)
+    x %>%
+      extract_covariates_along(landcov_2019)) -> along_landcov_19
+
+save(along_landcov_19, file = "along_landcov_19.RData")
+stopCluster(cl)
+```
+
+Now summarizing the barrier/landcover crossing data and attaching it as a covariate
+```{r}
+along_secondary %>% map(function(x){
+  map(x, function(i)
+    any(i == 1) %>%
+    if_else(1,0))
+}) -> along_secondary_binary
+
+map2(steps_covariates, along_secondary_binary, function(x, y)
+  x %>%
+    mutate(cross_secondary = unlist(y))) ->
+  steps_covariates
+
+along_street %>% map(function(x){
+  map(x, function(i)
+    any(i == 1) %>%
+    if_else(1,0))
+}) -> along_street_binary
+
+map2(steps_covariates, along_street_binary, function(x, y)
+  x %>%
+    mutate(cross_street = unlist(y))) ->
+  steps_covariates
+
+along_transmission_line %>% map(function(x){
+  map(x, function(i)
+    any(i == 1) %>%
+    if_else(1,0))
+}) -> along_transmission_line_binary
+
+map2(steps_covariates, along_transmission_line_binary, function(x, y)
+  x %>%
+    mutate(cross_transmission_line = unlist(y))) ->
+  steps_covariates
+```
+
+Attaching proportions of each landcover type from 2018
+```{r}
+along_landcov_18 %>% map(function(x){
+  map(x, function(i)
+    i %>%
+      map(.f = function(x){
+        if_else(x == 1, 1, 0)
+        }) %>%
+      unlist() %>%
+      mean()
+    )
+}) -> prop_path_crop_18
+
+map2(steps_covariates, prop_path_crop_18, function(x, y)
+  x %>%
+    mutate(prop_path_crop_18 = unlist(y))) ->
+  steps_covariates
+
+along_landcov_18 %>% map(function(x){
+  map(x, function(i)
+    i %>%
+      map(.f = function(x){
+        if_else(x == 2, 1, 0)
+        }) %>%
+      unlist() %>%
+      mean()
+    )
+}) -> prop_path_forest_18
+
+map2(steps_covariates, prop_path_forest_18, function(x, y)
+  x %>%
+    mutate(prop_path_forest_18 = unlist(y))) ->
+  steps_covariates
+
+along_landcov_18 %>% map(function(x){
+  map(x, function(i)
+    i %>%
+      map(.f = function(x){
+        if_else(x == 3, 1, 0)
+        }) %>%
+      unlist() %>%
+      mean()
+    )
+}) -> prop_path_shrub_18
+
+map2(steps_covariates, prop_path_shrub_18, function(x, y)
+  x %>%
+    mutate(prop_path_shrub_18 = unlist(y))) ->
+  steps_covariates
+
+along_landcov_18 %>% map(function(x){
+  map(x, function(i)
+    i %>%
+      map(.f = function(x){
+        if_else(x == 4, 1, 0)
+        }) %>%
+      unlist() %>%
+      mean()
+    )
+}) -> prop_path_barren_18
+
+map2(steps_covariates, prop_path_barren_18, function(x, y)
+  x %>%
+    mutate(prop_path_barren_18 = unlist(y))) ->
+  steps_covariates
+
+along_landcov_18 %>% map(function(x){
+  map(x, function(i)
+    i %>%
+      map(.f = function(x){
+        if_else(x == 6, 1, 0)
+        }) %>%
+      unlist() %>%
+      mean()
+    )
+}) -> prop_path_water_18
+
+map2(steps_covariates, prop_path_water_18, function(x, y)
+  x %>%
+    mutate(prop_path_water_18 = unlist(y))) ->
+  steps_covariates
+
+along_landcov_18 %>% map(function(x){
+  map(x, function(i)
+    i %>%
+      map(.f = function(x){
+        if_else(x == 7, 1, 0)
+        }) %>%
+      unlist() %>%
+      mean()
+    )
+}) -> prop_path_wetland_18
+
+map2(steps_covariates, prop_path_wetland_18, function(x, y)
+  x %>%
+    mutate(prop_path_wetland_18 = unlist(y))) ->
+  steps_covariates
+
+along_landcov_18 %>% map(function(x){
+  map(x, function(i)
+    i %>%
+      map(.f = function(x){
+        if_else(x == 8, 1, 0)
+        }) %>%
+      unlist() %>%
+      mean()
+    )
+}) -> prop_path_dev_open_18
+
+map2(steps_covariates, prop_path_dev_open_18, function(x, y)
+  x %>%
+    mutate(prop_path_dev_open_18 = unlist(y))) ->
+  steps_covariates
+
+along_landcov_18 %>% map(function(x){
+  map(x, function(i)
+    i %>%
+      map(.f = function(x){
+        if_else(x == 9, 1, 0)
+        }) %>%
+      unlist() %>%
+      mean()
+    )
+}) -> prop_path_dev_lmh_18
+
+map2(steps_covariates, prop_path_dev_lmh_18, function(x, y)
+  x %>%
+    mutate(prop_path_dev_lmh_18 = unlist(y))) ->
+  steps_covariates
+
+along_landcov_18 %>% map(function(x){
+  map(x, function(i)
+    i %>%
+      map(.f = function(x){
+        if_else(x == 10, 1, 0)
+        }) %>%
+      unlist() %>%
+      mean()
+    )
+}) -> prop_path_grass_18
+
+map2(steps_covariates, prop_path_grass_18, function(x, y)
+  x %>%
+    mutate(prop_path_grass_18 = unlist(y))) ->
+  steps_covariates
+
+along_landcov_18 %>% map(function(x){
+  map(x, function(i)
+    i %>%
+      map(.f = function(x){
+        if_else(x == 11, 1, 0)
+        }) %>%
+      unlist() %>%
+      mean()
+    )
+}) -> prop_path_crp_18
+
+map2(steps_covariates, prop_path_crp_18, function(x, y)
+  x %>%
+    mutate(prop_path_crp_18 = unlist(y))) ->
+  steps_covariates
+
+```
+
+And now 2019
+```{r}
+along_landcov_19 %>% map(function(x){
+  map(x, function(i)
+    i %>%
+      map(.f = function(x){
+        if_else(x == 1, 1, 0)
+        }) %>%
+      unlist() %>%
+      mean()
+    )
+}) -> prop_path_crop_19
+
+map2(steps_covariates, prop_path_crop_19, function(x, y)
+  x %>%
+    mutate(prop_path_crop_19 = unlist(y))) ->
+  steps_covariates
+
+along_landcov_19 %>% map(function(x){
+  map(x, function(i)
+    i %>%
+      map(.f = function(x){
+        if_else(x == 2, 1, 0)
+        }) %>%
+      unlist() %>%
+      mean()
+    )
+}) -> prop_path_forest_19
+
+map2(steps_covariates, prop_path_forest_19, function(x, y)
+  x %>%
+    mutate(prop_path_forest_19 = unlist(y))) ->
+  steps_covariates
+
+along_landcov_19 %>% map(function(x){
+  map(x, function(i)
+    i %>%
+      map(.f = function(x){
+        if_else(x == 3, 1, 0)
+        }) %>%
+      unlist() %>%
+      mean()
+    )
+}) -> prop_path_shrub_19
+
+map2(steps_covariates, prop_path_shrub_19, function(x, y)
+  x %>%
+    mutate(prop_path_shrub_19 = unlist(y))) ->
+  steps_covariates
+
+along_landcov_19 %>% map(function(x){
+  map(x, function(i)
+    i %>%
+      map(.f = function(x){
+        if_else(x == 4, 1, 0)
+        }) %>%
+      unlist() %>%
+      mean()
+    )
+}) -> prop_path_barren_19
+
+map2(steps_covariates, prop_path_barren_19, function(x, y)
+  x %>%
+    mutate(prop_path_barren_19 = unlist(y))) ->
+  steps_covariates
+
+along_landcov_19 %>% map(function(x){
+  map(x, function(i)
+    i %>%
+      map(.f = function(x){
+        if_else(x == 6, 1, 0)
+        }) %>%
+      unlist() %>%
+      mean()
+    )
+}) -> prop_path_water_19
+
+map2(steps_covariates, prop_path_water_19, function(x, y)
+  x %>%
+    mutate(prop_path_water_19 = unlist(y))) ->
+  steps_covariates
+
+along_landcov_19 %>% map(function(x){
+  map(x, function(i)
+    i %>%
+      map(.f = function(x){
+        if_else(x == 7, 1, 0)
+        }) %>%
+      unlist() %>%
+      mean()
+    )
+}) -> prop_path_wetland_19
+
+map2(steps_covariates, prop_path_wetland_19, function(x, y)
+  x %>%
+    mutate(prop_path_wetland_19 = unlist(y))) ->
+  steps_covariates
+
+along_landcov_19 %>% map(function(x){
+  map(x, function(i)
+    i %>%
+      map(.f = function(x){
+        if_else(x == 8, 1, 0)
+        }) %>%
+      unlist() %>%
+      mean()
+    )
+}) -> prop_path_dev_open_19
+
+map2(steps_covariates, prop_path_dev_open_19, function(x, y)
+  x %>%
+    mutate(prop_path_dev_open_19 = unlist(y))) ->
+  steps_covariates
+
+along_landcov_19 %>% map(function(x){
+  map(x, function(i)
+    i %>%
+      map(.f = function(x){
+        if_else(x == 9, 1, 0)
+        }) %>%
+      unlist() %>%
+      mean()
+    )
+}) -> prop_path_dev_lmh_19
+
+map2(steps_covariates, prop_path_dev_lmh_19, function(x, y)
+  x %>%
+    mutate(prop_path_dev_lmh_19 = unlist(y))) ->
+  steps_covariates
+
+along_landcov_19 %>% map(function(x){
+  map(x, function(i)
+    i %>%
+      map(.f = function(x){
+        if_else(x == 10, 1, 0)
+        }) %>%
+      unlist() %>%
+      mean()
+    )
+}) -> prop_path_grass_19
+
+map2(steps_covariates, prop_path_grass_19, function(x, y)
+  x %>%
+    mutate(prop_path_grass_19 = unlist(y))) ->
+  steps_covariates
+
+along_landcov_19 %>% map(function(x){
+  map(x, function(i)
+    i %>%
+      map(.f = function(x){
+        if_else(x == 11, 1, 0)
+        }) %>%
+      unlist() %>%
+      mean()
+    )
+}) -> prop_path_crp_19
+
+map2(steps_covariates, prop_path_crp_19, function(x, y)
+  x %>%
+    mutate(prop_path_crp_19 = unlist(y))) ->
+  steps_covariates
+
+```
+
+Extracting a few last sets of land cover covariates to endpoints
+```{r}
+map(steps_covariates, function(x)
+    x %>%
+      extract_covariates(landcov_2018)) -> 
+  steps_covariates
+
+map(steps_covariates, function(x)
+    x %>%
+      extract_covariates(landcov_2019)) -> 
+  steps_covariates
+```
+
+and patch size covariates to endpoints
+```{r}
+map(steps_covariates, function(x)
+    x %>%
+      extract_covariates(patchsize_2018)) -> 
+  steps_covariates
+
+map(steps_covariates, function(x)
+    x %>%
+      extract_covariates(patchsize_2019)) -> 
+  steps_covariates
+```
+
+And finally bringing steps_covariates back into the lpc_movements df
+```{r}
+lpc_movements$steps_covariates_full <- steps_covariates
+```
+
+## Cleaning steps & covariates prior to the issf
+
+Kicking out any steps which end outside the study area
+```{r}
+counties_interest <- raster(here_file("Projects", "Dispersal_paper", "counties_of_interest.tif"))#
+names(counties_interest) <- "county"
+
+lpc_movements %>%
+  mutate(steps_covariates_full = map(steps_covariates_full, function(x)
+    x %>%
+      extract_covariates(counties_interest))) -> 
+  lpc_movements
+
+lpc_movements %>%
+  mutate(steps_covariates_full = map(steps_covariates_full, function(x)
+    x %>%
+      filter(county == 1))) -> 
+  lpc_movements
+```
+
+Any step lengths that are zero are changed to the minimum step length for that individual. Allows sl_ to be log transformed
+```{r}
+lpc_movements %>%
+  mutate(steps_covariates_full = map(steps_covariates_full, function(x){
+    x %>%
+      filter(sl_ != 0) %>%
+      pull(sl_) %>%
+      min(na.rm = TRUE) -> y
+    x %>%
+      mutate(sl_ = recode(sl_, "0" = y))
+  })) -> 
+  lpc_movements
+```
+
+Any distance covariates that are zero are changed to 1. Allows these covariates to be log transformed
+```{r}
+lpc_movements %>%
+  mutate(steps_covariates_full = map(steps_covariates_full, function(x){
+    x %>%
+      mutate(distance_to_secondary = recode(distance_to_secondary, "0" = 1)) %>%
+      mutate(distance_to_street = recode(distance_to_street, "0" = 1)) %>%
+      mutate(distance_to_well = recode(distance_to_well, "0" = 1)) %>%
+      mutate(distance_to_transmission_line = recode(distance_to_transmission_line, "0" = 1))
+  })) -> 
+  lpc_movements
+```
+
+transforming step lengths and distance covariates to be normally distributed
+```{r}
+lpc_movements %>%
+  mutate(steps_covariates_full = map(steps_covariates_full, function(x) {
+    x %>%
+      mutate(log_sl_ = log(sl_)) %>%
+      mutate(log_distance_to_secondary = log(distance_to_secondary)) %>%
+      mutate(log_distance_to_street = log(distance_to_street)) %>%
+      mutate(log_distance_to_well = log(distance_to_well)) %>%
+      mutate(log_distance_to_transmission_line = log(distance_to_transmission_line))
+})) ->
+  lpc_movements
+```
+
+Remove steps where dt_ != 1 (multi-day steps due to missed GPS locations) 
+```{r}
+lpc_movements %>%
+  mutate(steps_covariates_full = map(steps_covariates_full, function(x)
+    x %>%
+      filter(dt_ == 1))) -> 
+  lpc_movements
+```
+
+Determining which landcov covariates should be used based on the year
+```{r}
+lpc_movements %>%
+  mutate(steps_covariates_full = map(steps_covariates_full, function(x)
+    x %>%
+      mutate(landcov = as.factor(if_else(ReleaseYear == 2018, landcov_18, landcov_19))) %>%
+      mutate(prop_path_crop = as.numeric(if_else(ReleaseYear == 2018, prop_path_crop_18, prop_path_crop_19))) %>%
+      mutate(prop_path_forest = as.numeric(if_else(ReleaseYear == 2018, prop_path_forest_18, prop_path_forest_19))) %>%
+      mutate(prop_path_shrub = as.numeric(if_else(ReleaseYear == 2018, prop_path_shrub_18, prop_path_shrub_19))) %>%
+      mutate(prop_path_barren = as.numeric(if_else(ReleaseYear == 2018, prop_path_barren_18, prop_path_barren_19))) %>%
+      mutate(prop_path_water = as.numeric(if_else(ReleaseYear == 2018, prop_path_water_18, prop_path_water_19))) %>%
+      mutate(prop_path_wetland = as.numeric(if_else(ReleaseYear == 2018, prop_path_wetland_18, prop_path_wetland_19))) %>%
+      mutate(prop_path_dev_open = as.numeric(if_else(ReleaseYear == 2018, prop_path_dev_open_18, prop_path_dev_open_19))) %>%
+      mutate(prop_path_dev_lmh = as.numeric(if_else(ReleaseYear == 2018, prop_path_dev_lmh_18, prop_path_dev_lmh_19))) %>%
+      mutate(prop_path_grass = as.numeric(if_else(ReleaseYear == 2018, prop_path_grass_18, prop_path_grass_19))) %>%
+      mutate(prop_path_crp = as.numeric(if_else(ReleaseYear == 2018, prop_path_crp_18, prop_path_crp_19))) %>%
+      mutate(patch_size = as.numeric(if_else(ReleaseYear == 2018, patch_size_18, patch_size_19)))
+      )) -> 
+  lpc_movements
+```
+
+Key for landcov analyses:
+0 No data
+1 Crop
+2 Forest/Woody wetland
+3 Shrubland
+4 Barren
+6 Water
+7 Wetland
+8 Developed (open space, roads)
+9 Developed (low, mid, high)
+10 Grassland/Pasture
+11 CRP
+
+Need to plot all of these out before I use a final run! Check for a normal distribution
+
+## Folding into a single tibble for analysis
+
+```{r}
+lpc_movements %>% #note: the fewer of these I keep in the better the p values get
+  pull(steps_covariates_full) %>%
+  bind_rows() %>%
+  mutate(landcov = as.factor(recode(as.character(landcov), 
+                                     '128' = '1', #error causes this landcov
+                                     '1' = '1',
+                                     '2' = '2',
+                                     '3' ='3',
+                                     '4' = '4',
+                                     '5' = '5',
+                                     '6' = '6',
+                                     '7' = '7',
+                                     '8' = '8',
+                                     '9' = '9',
+                                     '10' = '10',
+                                     '11' = '11'))) %>% 
+  mutate(crop_binary = if_else(landcov == 1, 1, 0),
+         forest_binary = if_else(landcov == 2, 1, 0),
+         shrub_binary = if_else(landcov == 3, 1, 0),
+         barren_binary = if_else(landcov == 4, 1, 0),
+         water_binary = if_else(landcov == 6, 1, 0),
+         wetland_binary = if_else(landcov == 7, 1, 0),
+         dev_open_binary = if_else(landcov == 8, 1, 0),
+         dev_lmh_binary = if_else(landcov == 9, 1, 0),
+         grass_binary = if_else(landcov == 10, 1, 0),
+         crp_binary = if_else(landcov == 11, 1, 0),
+         ) %>%
+  mutate(step_id_ = paste0(step_id_, "_", Haukos_SatID)) -> 
+  ssf_data
+```
+
+Save image for future analysis
+```{r}
+save.image(file = "workspace_XX_XX_XX.RData")
+```
+

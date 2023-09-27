@@ -1,0 +1,91 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r}
+library(raster)
+library(tidyverse)
+library(googlesheets4)
+library(sf)
+library(there) #fixed; some code is used to it being broken
+library(readr)
+library(lubridate)
+library(mapview)
+library(amt)
+library(adehabitatLT)
+library(hms)
+library(ggplot2)
+library(parallel)
+library(AICcmodavg)
+library(glmmTMB)
+library(broom.mixed)
+```
+
+```{r}
+ssf_data %>% 
+  mutate(case_ = case_match(case_,
+                            TRUE ~ "Used",
+                            FALSE ~ "Available")) %>% 
+  ggplot(aes(x = distance_to_well)) +
+  geom_histogram(bins = 30, aes(y = after_stat(density)/sum(after_stat(density))), color = "black", fill = "grey") + # after_stat(count)/sum(after_stat(count))
+  theme_bw() +
+  scale_y_continuous(labels = scales::percent_format()) +
+  scale_x_log10() +
+  facet_grid(rows = vars(case_)) +
+  xlab("Distance to Oil/Gas Well (m)") +
+  ylab("Percent of locations")
+
+ggsave(filename = "appendix_OG_distribution.png", height = 7/1.5, width = 10/1.5)
+```
+
+```{r}
+ssf_data %>% 
+  mutate(case_ = case_match(case_,
+                            TRUE ~ "Used",
+                            FALSE ~ "Available")) %>% 
+  ggplot(aes(x = distance_to_secondary)) +
+  geom_histogram(bins = 30, aes(y = after_stat(density)/sum(after_stat(density))), color = "black", fill = "#E69800") + # after_stat(count)/sum(after_stat(count))
+  theme_bw() +
+  scale_y_continuous(labels = scales::percent_format()) +
+  scale_x_log10() +
+  facet_grid(rows = vars(case_)) +
+  xlab("Distance to Highway (m)") +
+  ylab("Percent of locations")
+ggsave(filename = "appendix_highway_distribution.png", height = 7/1.5, width = 8/1.5)
+```
+
+Won't save this, but good example of what selection actually looks like
+```{r}
+ssf_data %>% 
+  mutate(case_ = case_match(case_,
+                            TRUE ~ "Used",
+                            FALSE ~ "Available")) %>% 
+  ggplot(aes(x = distance_to_street)) +
+  geom_histogram(bins = 30, aes(y = after_stat(density)/sum(after_stat(density))), color = "black", fill = "grey") + # after_stat(count)/sum(after_stat(count))
+  theme_bw() +
+  scale_y_continuous(labels = scales::percent_format()) +
+  scale_x_log10() +
+  facet_grid(rows = vars(case_)) +
+  xlab("Distance to Street (m)") +
+  ylab("Percent of locations")
+```
+
+Distance to transmission line
+```{r}
+ssf_data %>% 
+  mutate(case_ = case_match(case_,
+                            TRUE ~ "Used",
+                            FALSE ~ "Available")) %>% 
+  ggplot(aes(x = distance_to_transmission_line)) +
+  geom_histogram(bins = 30, aes(y = after_stat(density)/sum(after_stat(density))), color = "black", fill = "#8400A8") + # after_stat(count)/sum(after_stat(count))
+  theme_bw() +
+  scale_y_continuous(labels = scales::percent_format()) +
+  scale_x_log10() +
+  facet_grid(rows = vars(case_)) +
+  xlab("Distance to Transmission Line (m)") +
+  ylab("Percent of locations")
+
+ggsave(filename = "appendix_transmission_line_distribution.png", height = 7/1.5, width = 8/1.5)
+```
+

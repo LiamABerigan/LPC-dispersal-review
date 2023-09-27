@@ -1,0 +1,168 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+Starts after line 38 in issf_glmtmb_analysis, using the results from workspace_12_13_22.RData
+
+Suites:
+- Land cover at endpoint (LCAE)
+- Land cover along step (LCAS)
+- Distance from endpoint to obstacle (DFETO)
+- Obstacle crossing (OC)
+
+```{r}
+LCAE.candidate.set <- list()
+
+LCAE.candidate.set[[1]] <- glmmTMB(case_ ~ -1 + (1|step_id_), family = poisson, data = ssf_data, doFit = FALSE, map = list(theta=factor(c(NA)))) #Null
+
+LCAE.candidate.set[[2]] <- glmmTMB(case_ ~ -1 + log_sl_z + (1|step_id_), family = poisson, data = ssf_data, doFit = FALSE, map = list(theta=factor(c(NA)))) #step length
+
+LCAE.candidate.set[[3]] <- glmmTMB(case_ ~ -1 + shrub_binary_z + log_sl_z + (1|step_id_) + (0 + shrub_binary_z|Haukos_SatID), family = poisson, data = ssf_data, doFit = FALSE, map = list(theta=factor(c(NA, 1))))
+
+LCAE.candidate.set[[4]] <- glmmTMB(case_ ~ -1 + dev_open_binary_z + log_sl_z + (1|step_id_) + (0 + dev_open_binary_z|Haukos_SatID), family = poisson, data = ssf_data, doFit = FALSE, map = list(theta=factor(c(NA, 1))))
+
+LCAE.candidate.set[[5]] <- glmmTMB(case_ ~ -1 + grass_binary_z + log_sl_z + (1|step_id_) + (0 + grass_binary_z|Haukos_SatID), family = poisson, data = ssf_data, doFit = FALSE, map = list(theta=factor(c(NA, 1))))
+
+LCAE.candidate.set[[6]] <- glmmTMB(case_ ~ -1 + crp_binary_z + log_sl_z + (1|step_id_) + (0 + crp_binary_z|Haukos_SatID), family = poisson, data = ssf_data, doFit = FALSE, map = list(theta=factor(c(NA, 1))))
+
+LCAE.candidate.names <- c("null", "log_sl", "shrub", "dev_open", "grass", "crp")
+```
+
+```{r}
+LCAS.candidate.set <- list()
+
+LCAS.candidate.set[[1]] <- glmmTMB(case_ ~ -1 + (1|step_id_), family = poisson, data = ssf_data, doFit = FALSE, map = list(theta=factor(c(NA)))) #Null
+
+LCAS.candidate.set[[2]] <- glmmTMB(case_ ~ -1 + log_sl_z + (1|step_id_), family = poisson, data = ssf_data, doFit = FALSE, map = list(theta=factor(c(NA)))) #step length
+
+LCAS.candidate.set[[3]] <- glmmTMB(case_ ~ -1 + prop_path_shrub_z + log_sl_z + (1|step_id_) + (0 + prop_path_shrub_z|Haukos_SatID), family = poisson, data = ssf_data, doFit = FALSE, map = list(theta=factor(c(NA, 1))))
+
+LCAS.candidate.set[[4]] <- glmmTMB(case_ ~ -1 + prop_path_dev_open_z + log_sl_z + (1|step_id_) + (0 + prop_path_dev_open_z|Haukos_SatID), family = poisson, data = ssf_data, doFit = FALSE, map = list(theta=factor(c(NA, 1))))
+
+LCAS.candidate.set[[5]] <- glmmTMB(case_ ~ -1 + prop_path_grass_z + log_sl_z + (1|step_id_) + (0 + prop_path_grass_z|Haukos_SatID), family = poisson, data = ssf_data, doFit = FALSE, map = list(theta=factor(c(NA, 1))))
+
+LCAS.candidate.set[[6]] <- glmmTMB(case_ ~ -1 + prop_path_crp_z + log_sl_z + (1|step_id_) + (0 + prop_path_crp_z|Haukos_SatID), family = poisson, data = ssf_data, doFit = FALSE, map = list(theta=factor(c(NA, 1))))
+
+LCAS.candidate.names <- c("null", "log_sl", "shrub", "dev_open", "grass", "crp")
+```
+
+```{r}
+DFETO.candidate.set <- list()
+
+DFETO.candidate.set[[1]] <- glmmTMB(case_ ~ -1 + (1|step_id_), family = poisson, data = ssf_data, doFit = FALSE, map = list(theta=factor(c(NA)))) #Null
+
+DFETO.candidate.set[[2]] <- glmmTMB(case_ ~ -1 + log_sl_z + (1|step_id_), family = poisson, data = ssf_data, doFit = FALSE, map = list(theta=factor(c(NA)))) #step length
+
+DFETO.candidate.set[[3]] <- glmmTMB(case_ ~ -1 + log_distance_to_secondary_z + log_sl_z + (1|step_id_) + (0 + log_distance_to_secondary_z|Haukos_SatID), family = poisson, data = ssf_data, doFit = FALSE, map = list(theta=factor(c(NA, 1))))
+
+DFETO.candidate.set[[4]] <- glmmTMB(case_ ~ -1 + log_distance_to_street_z + log_sl_z + (1|step_id_) + (0 + log_distance_to_street_z|Haukos_SatID), family = poisson, data = ssf_data, doFit = FALSE, map = list(theta=factor(c(NA, 1))))
+
+DFETO.candidate.set[[5]] <- glmmTMB(case_ ~ -1 + log_distance_to_well_z + log_sl_z + (1|step_id_) + (0 + log_distance_to_well_z|Haukos_SatID), family = poisson, data = ssf_data, doFit = FALSE, map = list(theta=factor(c(NA, 1))))
+
+DFETO.candidate.set[[6]] <- glmmTMB(case_ ~ -1 + log_distance_to_transmission_line_z + log_sl_z + (1|step_id_) + (0 + log_distance_to_transmission_line_z|Haukos_SatID), family = poisson, data = ssf_data, doFit = FALSE, map = list(theta=factor(c(NA, 1))))
+
+DFETO.candidate.names <- c("null", "log_sl", "highway", "street", "well", "transmission_line")
+```
+
+```{r}
+OC.candidate.set <- list()
+
+OC.candidate.set[[1]] <- glmmTMB(case_ ~ -1 + (1|step_id_), family = poisson, data = ssf_data, doFit = FALSE, map = list(theta=factor(c(NA)))) #Null
+
+OC.candidate.set[[2]] <- glmmTMB(case_ ~ -1 + log_sl_z + (1|step_id_), family = poisson, data = ssf_data, doFit = FALSE, map = list(theta=factor(c(NA)))) #step length
+
+OC.candidate.set[[3]] <- glmmTMB(case_ ~ -1 + cross_street_z + log_sl_z + (1|step_id_) + (0 + cross_street_z|Haukos_SatID), family = poisson, data = ssf_data, doFit = FALSE, map = list(theta=factor(c(NA, 1))))
+
+OC.candidate.set[[4]] <- glmmTMB(case_ ~ -1 + cross_secondary_z + log_sl_z + (1|step_id_) + (0 + cross_secondary_z|Haukos_SatID), family = poisson, data = ssf_data, doFit = FALSE, map = list(theta=factor(c(NA, 1))))
+
+OC.candidate.set[[5]] <- glmmTMB(case_ ~ -1 + cross_transmission_line_z + log_sl_z + (1|step_id_) + (0 + cross_transmission_line_z|Haukos_SatID), family = poisson, data = ssf_data, doFit = FALSE, map = list(theta=factor(c(NA, 1))))
+
+OC.candidate.names <- c("null", "log_sl", "street", "highway", "transmission_line")
+```
+
+## Fitting the candidate models
+
+Set the variance as constant at 1000 and fit the model
+```{r}
+fit_glmm_constant_variance <- function(x){
+  #Fix the standard deviation of the first random term, which is the (1|step_id_) component in the above model equation
+  #set the variance to 1000 by setting its log (sd) to log(1000)
+  x$parameters$theta[1] <- log(1e3)
+  
+  #We need to tell glmmTMB not to change the variance by setting it to NA:
+  #now set when I define each individual function, so this isn't necessary here
+  #x$mapArg <- list(theta=factor(c(NA)))
+  
+  #print so I know which model to attribute error code to
+  x$fr %>% names() %>% print()
+  
+  #Then fit the model and look at the results:
+  glmmTMB:::fitTMB(x) %>% 
+    return()
+}
+
+LCAE.candidate.set %>%
+  map(.f = fit_glmm_constant_variance) ->
+  LCAE.model.set
+
+LCAS.candidate.set %>%
+  map(.f = fit_glmm_constant_variance) ->
+  LCAS.model.set
+
+DFETO.candidate.set %>%
+  map(.f = fit_glmm_constant_variance) ->
+  DFETO.model.set
+
+OC.candidate.set %>%
+  map(.f = fit_glmm_constant_variance) ->
+  OC.model.set
+```
+
+Land cover at endpoint results
+```{r}
+aictab(cand.set = LCAE.model.set, modnames = LCAE.candidate.names)
+```
+
+Land cover along step results
+```{r}
+aictab(cand.set = LCAS.model.set, modnames = LCAS.candidate.names)
+```
+
+Distance from endpoint to obstacle results
+```{r}
+aictab(cand.set = DFETO.model.set, modnames = DFETO.candidate.names)
+```
+
+Obstacle crossing results
+```{r}
+aictab(cand.set = OC.model.set, modnames = OC.candidate.names)
+```
+
+Ensemble suite using the best models: LCAE crp, LCAS crp, DFETO street
+```{r}
+ensemble.candidate.set <- list()
+
+ensemble.candidate.set[[1]] <- glmmTMB(case_ ~ -1 + (1|step_id_), family = poisson, data = ssf_data, doFit = FALSE, map = list(theta=factor(c(NA)))) #Null
+
+ensemble.candidate.set[[2]] <- glmmTMB(case_ ~ -1 + log_sl_z + (1|step_id_), family = poisson, data = ssf_data, doFit = FALSE, map = list(theta=factor(c(NA)))) #step length
+
+ensemble.candidate.set[[3]] <- glmmTMB(case_ ~ -1 + crp_binary_z + log_sl_z + (1|step_id_) + (0 + crp_binary_z|Haukos_SatID), family = poisson, data = ssf_data, doFit = FALSE, map = list(theta=factor(c(NA, 1))))
+
+ensemble.candidate.set[[4]] <- glmmTMB(case_ ~ -1 + prop_path_crp_z + log_sl_z + (1|step_id_) + (0 + prop_path_crp_z|Haukos_SatID), family = poisson, data = ssf_data, doFit = FALSE, map = list(theta=factor(c(NA, 1))))
+
+ensemble.candidate.set[[5]] <- glmmTMB(case_ ~ -1 + log_distance_to_street_z + log_sl_z + (1|step_id_) + (0 + log_distance_to_street_z|Haukos_SatID), family = poisson, data = ssf_data, doFit = FALSE, map = list(theta=factor(c(NA, 1))))
+
+# ensemble.candidate.set[[6]] <- glmmTMB(case_ ~ -1 + crp_binary_z + prop_path_crp_z + log_distance_to_street_z + log_sl_z + (1|step_id_) + (0 + crp_binary_z|Haukos_SatID) + (0 + prop_path_crp_z|Haukos_SatID) + (0 + log_distance_to_street_z|Haukos_SatID), family = poisson, data = ssf_data, doFit = FALSE, map = list(theta=factor(c(NA, 1, 2, 3)))) #full
+
+
+ensemble.candidate.names <- c("null", "log_sl", "LCAE crp", "LCAS crp", "DFETO street") #, "full"
+
+ensemble.candidate.set %>%
+  map(.f = fit_glmm_constant_variance) ->
+  ensemble.model.set
+```
+
+```{r}
+aictab(cand.set = ensemble.model.set, modnames = ensemble.candidate.names)
+```
+
