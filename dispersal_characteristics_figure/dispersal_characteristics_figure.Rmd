@@ -1,0 +1,223 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+
+```{r}
+library(tidyverse)
+library(sf)
+library(googlesheets4)
+library(ggplot2)
+library(lubridate)
+library(there)
+library(units)
+library(ggpubr)
+```
+
+Loading in spatial data 
+```{r}
+settled_points_2018 <- st_read(
+  dsn = here_file("Projects" , "Dispersal_paper", "settlement_designations"),
+  layer = "settlement_locations_2018"
+) %>% st_transform(st_crs(5070))
+
+settled_points_2019 <- st_read(
+  dsn = here_file("Projects" , "Dispersal_paper", "settlement_designations"),
+  layer = "settlement_locations_2019"
+) %>% st_transform(st_crs(5070))
+
+settled_points <- rbind(settled_points_2018, settled_points_2019)
+
+release_sites <- st_read(
+  dsn = getwd(), 
+  layer = "Release_sites") %>% 
+  st_transform(st_crs(5070))
+
+```
+
+Loading, prepping, and joining the 2019 capture data
+```{r}
+banding_2019 <- read_sheet("1Ys9wnY8GV-kEO9q1hXWbvU3RGAzDe8L2lqWIX3wqQMw", "2019")
+banding_2018 <- read_sheet("1Ys9wnY8GV-kEO9q1hXWbvU3RGAzDe8L2lqWIX3wqQMw", "2018")
+banding_2017 <- read_sheet("1Ys9wnY8GV-kEO9q1hXWbvU3RGAzDe8L2lqWIX3wqQMw", "2017")
+banding_2016 <- read_sheet("1Ys9wnY8GV-kEO9q1hXWbvU3RGAzDe8L2lqWIX3wqQMw", "2016")
+
+banding <- rbind(banding_2016, banding_2017, banding_2018, banding_2019)
+
+banding %>%
+  filter(!is.na(BandNumber)) ->
+  banding
+
+names(settled_points)[1] <- "Haukos_SatID"
+
+settled_points <-
+  settled_points %>%
+  left_join(banding)
+```
+
+Determining the distance between each point and the correct release site
+```{r}
+settled_points <- settled_points %>%
+  mutate(distance_lasvacas = st_distance(settled_points, release_sites[2,])) %>%
+  mutate(distance_p3 = st_distance(settled_points, release_sites[3,])) %>%
+  mutate(distance_l7 = st_distance(settled_points, release_sites[4,])) %>%
+  mutate(distance_l4 = st_distance(settled_points, release_sites[5,]))
+
+correct_dist <- function(release, distance_lasvacas, distance_p3, distance_l7, distance_l4){
+  switch (release,
+    "Las Vacas Blancas" = distance_lasvacas,
+    "P3" = distance_p3,
+    "L7" = distance_l7,
+    "L4" = distance_l4
+  )
+}
+
+settled_points <- settled_points %>%
+  rowwise() %>%
+  mutate(dist_releasesite = correct_dist(ReleaseLocation, distance_lasvacas, distance_p3, distance_l7, distance_l4)) %>% 
+  ungroup()
+
+mean(settled_points$dist_releasesite/1000)
+range(settled_points$dist_releasesite/1000)
+
+#percent dispersed
+settled_points %>%
+  filter(as.numeric(dist_releasesite) > 5000) %>%
+  nrow(.)/nrow(settled_points)
+```
+
+Figure: displacement from release site
+```{r}
+displacement_releasesite <- ggplot(data = settled_points, aes(fill = Sex)) +
+  theme_bw() +
+  geom_boxplot(aes(x = as_factor(ReleaseYear), y = as.numeric(dist_releasesite/1000))) +
+  xlab("Year of release") +
+  ylab("Release site to settlement point (km)") +
+  theme(axis.title.x = element_blank())
+  #ggtitle("Displacement from Release Site by Sex and Year") +
+  #EnvStats::stat_n_text(aes(x = as_factor(ReleaseYear), y = as.numeric(dist_releasesite/1000)))
+
+displacement_releasesite
+
+#ggsave("displacement_releasesite_12_14_22.tiff",  width = 5, height = 3.5)
+```
+
+
+Calculating distance moved statistics
+```{r}
+dispersal_points_2018 <- st_read(dsn = here_file("Projects" , "Dispersal_paper", "settlement_designations"), layer = "dispersal_locations_2018")
+dispersal_points_2019 <- st_read(dsn = here_file("Projects" , "Dispersal_paper", "settlement_designations"), layer = "dispersal_locations_2019")
+
+dispersal_points <- rbind(dispersal_points_2018, dispersal_points_2019)
+
+names(dispersal_points)[1] <- "Haukos_SatID"; names(dispersal_points)[2] <- "DateTime";  names(dispersal_points)[3] <- "reg_group"
+
+dispersal_points %>%
+  st_drop_geometry() %>%
+  group_by(Haukos_SatID) %>%
+  summarise(total_dist = sum(dist, na.rm = TRUE), last_disp_date = max(DateTime)) %>%
+  left_join(banding) %>%
+  mutate(dispersal_period = last_disp_date - as_date(HandlingDate)) ->
+  dispersal_results
+
+```
+
+Figure: Distance moved before settlement
+```{r}
+distance_moved_before_settlement <-ggplot(data = dispersal_results, aes(fill = Sex)) +
+  theme_bw() +
+  geom_boxplot(aes(x = as_factor(ReleaseYear), y = total_dist/1000)) +
+  xlab("Year of release") +
+  ylab("Distance moved during dispersal (km)") +
+  theme(axis.title.x = element_blank())
+  #ggtitle("Distance Moved Before Settlement by Sex and Year") +
+  #EnvStats::stat_n_text(aes(x = as_factor(ReleaseYear), y = total_dist/1000))
+
+distance_moved_before_settlement
+
+#ggsave("distance_moved_before_settlement_12_14_22.tiff",  width = 5, height = 3.5)
+```
+
+Figure: Days before settlement
+```{r}
+days_before_settlement <- ggplot(data = dispersal_results, aes(fill = Sex)) +
+  geom_boxplot(aes(x = as_factor(ReleaseYear), y = dispersal_period)) +
+  theme_bw() +
+  xlab("Year of release") +
+  ylab("Days before settlement")  +
+  theme(axis.title.x = element_blank())
+  #ggtitle("Days Moved Before Settlement by Sex and Year") +
+  #EnvStats::stat_n_text(aes(x = as_factor(ReleaseYear), y = dispersal_period))
+
+days_before_settlement
+
+#ggsave("days_before_settlement_12_14_22.tiff", width = 5, height = 3.5)
+```
+
+Dispersal distance and variation stats
+```{r}
+mean(dispersal_results$total_dist/1000)
+range(dispersal_results$total_dist/1000)
+mean(dispersal_results$dispersal_period)
+
+dispersal_results %>%
+  filter(Sex == "Male") %>%
+  pull(total_dist) %>%
+  range()
+
+dispersal_results %>%
+  filter(Sex == "Female") %>%
+  pull(dispersal_period) %>%
+  sd()
+```
+
+Finally, calculating the # of leks visited during dispersal. Checked that this was working properly 12/14/22
+```{r}
+leks <- st_read(dsn = getwd(), "lek_sites") %>%
+  st_transform(5070)
+
+buffered_leks <- leks %>%
+  st_buffer(500) %>% #3200
+  dplyr::select(LekName)
+
+num_leks_visited_df <- dispersal_points %>% 
+  st_join(buffered_leks) %>% 
+  st_drop_geometry() %>% 
+  group_by(Haukos_SatID) %>% 
+  summarise(n_leks_visited = length(na.omit(unique(LekName)))) %>% #leks_visited = na.omit(unique(LekName)),
+  left_join(banding) %>% 
+  mutate(ReleaseYear = as_factor(year(HandlingDate))) #%>% 
+  #filter(ReleaseYear == "2018",
+  #       Sex == "Male")
+
+num_leks_visited <- ggplot(data = num_leks_visited_df, aes(fill = Sex)) +
+  theme_bw() +
+  geom_boxplot(aes(x = ReleaseYear, y = n_leks_visited)) +
+  xlab("Year of Release") +
+  ylab("Leks visited during dispersal") +
+  theme(axis.title.x = element_blank())
+
+num_leks_visited
+
+num_leks_visited_df %>% 
+  group_by(Sex) %>% 
+  summarize(MEAN = mean(n_leks_visited), SD = sd(n_leks_visited), RANGE = c(range(n_leks_visited)))
+
+#ggsave("num_leks_visited_12_14_22.tiff", width = 5, height = 3.5)
+```
+
+Creating a figure that incorporates all of these metrics
+```{r fig.height=7, fig.width=7}
+ggarrange(distance_moved_before_settlement, 
+          displacement_releasesite, 
+          days_before_settlement,
+          disp_plot,
+          #num_leks_visited, 
+          common.legend = TRUE, 
+          legend = "bottom", 
+          labels = "AUTO")
+
+ggsave("multipanel_dispersal_characteristics_1_6_23.tiff", height = 7.5, width = 8.6)
+```
+

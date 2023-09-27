@@ -1,0 +1,105 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+Same package dependencies as the main file, plus
+```{r}
+library(mapview)
+library(terra)
+library(tidyterra)
+library(amt)
+
+# basemap <- rast(here_file("Projects", "Dispersal_paper", "study_site_basemap", "study_site_basemap", "basemap_3_noreference.tif"))
+states <- st_read(here_file("Anthropogenic_features", "US_state_polygons.shp")) %>% 
+  st_transform(5070)
+
+leks <- st_read(here_file("Release_Features", "lek_sites.shp"))
+```
+
+Making tracks for each individual animal and then exporting to lines
+```{r}
+dispersal_df <- dispersal_points %>% 
+  cbind(., st_coordinates(.)) %>% 
+  st_drop_geometry() %>% 
+  nest_by(Haukos_SatID)
+
+dispersal_df$tracks <- map(dispersal_df$data, function(int){
+  mk_track(tbl = int, .x = X, .y = Y, .t = DateTime)
+})
+
+dispersal_df$lines <- map(dispersal_df$tracks, function(int){
+  as_sf_lines(int)
+})
+
+dispersal_lines <- dispersal_df %>% 
+  dplyr::select(-data, -tracks) %>% 
+  unnest(cols = lines) %>% 
+  ungroup() %>% 
+  left_join(filter(dplyr::select(banding, Haukos_SatID, Sex), !is.na(Haukos_SatID))) #join banding records
+
+colnames(dispersal_lines)[2] <- "geometry"
+
+dispersal_lines <- st_as_sf(dispersal_lines, crs = st_crs(5070))
+```
+
+```{r}
+# disp_plot <- ggplot(data = dispersal_lines, aes(color = Sex)) +
+#   theme_bw() +
+#   geom_spatraster_rgb(data = basemap, maxcell = 1e07) +
+#   geom_sf() +
+#   coord_sf(xlim = c(st_bbox(dispersal_lines)$xmin, st_bbox(dispersal_lines)$xmax), 
+#            ylim = c(st_bbox(dispersal_lines)$ymin, st_bbox(dispersal_lines)$ymax)) +
+#   theme(legend.position = "none",
+#         axis.text.x=element_blank(), #remove x axis labels
+#         axis.ticks.x=element_blank(), #remove x axis ticks
+#         axis.text.y=element_blank(),  #remove y axis labels
+#         axis.ticks.y=element_blank()  #remove y axis ticks
+#         )
+```
+
+
+```{r}
+# x_range <- ggplot_build(disp_plot)$layout$panel_scales_x[[1]]$range$range
+# 
+# y_range <- ggplot_build(disp_plot)$layout$panel_scales_y[[1]]$range$range
+# 
+# basemap_cropped <- crop(basemap, 
+#                         ext(c(xmin = x_range[1], 
+#                               xmax = x_range[2], 
+#                               ymin = y_range[1], 
+#                               ymax = y_range[2])))
+```
+
+```{r}
+disp_plot <- ggplot(data = dispersal_lines, aes(color = Sex)) +
+  theme_bw() +
+  #geom_spatraster_rgb(data = basemap_cropped, maxcell = 1e07) +
+  geom_sf(data = states, color = "darkgrey", fill = "white") +
+  geom_sf() +
+  geom_sf(data = leks, color = "black", size = 1) +
+  coord_sf(xlim = c(st_bbox(dispersal_lines)$xmin, st_bbox(dispersal_lines)$xmax), 
+           ylim = c(st_bbox(dispersal_lines)$ymin, st_bbox(dispersal_lines)$ymax)) +
+  theme(legend.position = "none",
+        axis.title.x = element_blank(),
+        axis.title.y = element_blank(),
+        #,
+        #axis.text.x=element_blank(), #remove x axis labels
+        #axis.ticks.x=element_blank(), #remove x axis ticks
+        #axis.text.y=element_blank(),  #remove y axis labels
+        #axis.ticks.y=element_blank()  #remove y axis ticks
+        ) + 
+  annotate(
+    "text", label = "Kansas",
+    x = -475073.3, y = 1624981, size = 3, colour = "darkgrey"
+  ) +
+  annotate(
+    "text", label = "Colorado",
+    x = -570000, y = 1644981, size = 3, colour = "darkgrey"
+  ) +
+  annotate(
+    "text", label = "Oklahoma",
+    x = -570000, y = 1535000, size = 3, colour = "darkgrey"
+  )
+```
+Now take disp_plot over to render the combined plot figure
